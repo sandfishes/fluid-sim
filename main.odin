@@ -2,14 +2,44 @@ package main
 
 import "gpu"
 
+import la "core:math/linalg"
 import "core:os"
 import "vendor:glfw"
 import vk "vendor:vulkan"
+
+Buffer_Struct :: struct {
+	index_buffer:          gpu.GPUBuffer,
+	vertex_buffer:         gpu.GPUBuffer,
+	vertex_buffer_address: vk.DeviceAddress, // Pointer to the buffer on the GPU side.
+}
+
+GPU_Draw_Push_Constants :: struct {
+	world_matrix:  matrix[4, 4]f32,
+	vertex_buffer: vk.DeviceAddress,
+}
 
 main :: proc()
 {
 	rs: ^gpu.Renderer_State = &gpu.rs
 	// set up the window and Vulkan
+
+	// TODO move this layout info somewhere
+	buffer_range := vk.PushConstantRange {
+		offset     = 0,
+		size       = size_of(GPU_Draw_Push_Constants),
+		stageFlags = {.VERTEX},
+	}
+
+	pipeline_layout_info := vk.PipelineLayoutCreateInfo {
+		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+		pNext                  = nil,
+		flags                  = {},
+		setLayoutCount         = 0,
+		pSetLayouts            = nil,
+		pushConstantRangeCount = 1,
+		pPushConstantRanges    = &buffer_range,
+	}
+
 	{
 		glfw.Init()
 		glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
@@ -19,7 +49,7 @@ main :: proc()
 
 		// Load shaders
 		module: vk.ShaderModule = gpu.compile_shader_module("triangle.slang", "vertexmain", "fragmentmain")
-		rs.pipeline_layout, rs.pipeline = gpu.create_pipeline(module)
+		rs.pipeline_layout, rs.pipeline = gpu.create_pipeline(module, pipeline_layout_info)
 		assert(rs.pipeline != 0, "Couldn't load shaders!")
 	}
 
@@ -28,14 +58,33 @@ main :: proc()
 
 	// Create index buffer
 	indices := [?]u32{0, 1, 2, 2, 3, 0}
-
 	indices_buffer := gpu.create_buffer(auto_cast size_of(indices), {.INDEX_BUFFER, .TRANSFER_DST})
 	gpu.staging_write_buffer_slice(&indices_buffer, indices[:])
+
+	Vertex :: struct {
+		position: [3]f32,
+		color:    [4]f32,
+	}
+
+	vertices := [?]Vertex {
+		{{-0.5, -0.5, 0.0}, {1.0, 0.0, 0.0, 1.0}},
+		{{-0.5, 0.5, 0.0}, {0.0, 1.0, 0.0, 1.0}},
+		{{0.5, 0.5, 0.0}, {0.0, 0.0, 1.0, 1.0}},
+	}
+
+	vertex_buffer := gpu.create_buffer(auto_cast size_of(vertices), {.VERTEX_BUFFER, .TRANSFER_DST})
+	gpu.staging_write_buffer_slice(&vertex_buffer, vertices[:])
+	mesh := Buffer_Struct{indices_buffer, vertex_buffer, 0}
+	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
+		sType  = .BUFFER_DEVICE_ADDRESS_INFO,
+		buffer = mesh.vertex_buffer.buffer,
+	}
+	mesh.vertex_buffer_address = vk.GetBufferDeviceAddress(rs.device, &vertex_buffer_address_info)
 
 	for !glfw.WindowShouldClose(rs.window) {
 		glfw.PollEvents()
 
-		last_write_time, err := os.last_write_time_by_name("example/triangle.slang")
+		last_write_time, err := os.last_write_time_by_name("triangle.slang")
 
 		// Hot reload shader
 		{
@@ -47,7 +96,7 @@ main :: proc()
 				}
 
 				module: vk.ShaderModule = gpu.compile_shader_module("triangle.slang", "vertexmain", "fragmentmain")
-				rs.pipeline_layout, rs.pipeline = gpu.create_pipeline(module)
+				rs.pipeline_layout, rs.pipeline = gpu.create_pipeline(module, pipeline_layout_info)
 				assert(rs.pipeline != 0, "Couldn't load shaders!")
 				current_last_write_time = last_write_time
 			}
@@ -88,7 +137,14 @@ main :: proc()
 		gpu.begin_render_pass()
 
 		vk.CmdBindPipeline(cmd, .GRAPHICS, rs.pipeline)
-		vk.CmdBindIndexBuffer(cmd, indices_buffer.buffer, 0, .UINT32)
+
+		push_constants := GPU_Draw_Push_Constants {
+			world_matrix  = la.MATRIX4F32_IDENTITY,
+			vertex_buffer = mesh.vertex_buffer_address,
+		}
+
+		vk.CmdPushConstants(cmd, rs.pipeline_layout, {.VERTEX}, 0, size_of(GPU_Draw_Push_Constants), &push_constants)
+		vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
 
 		// Draw triangle
 		vk.CmdDrawIndexed(cmd, 3, 1, 0, 0, 0)

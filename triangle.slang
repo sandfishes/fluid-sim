@@ -1,38 +1,37 @@
-struct V2P {
+struct VSOutput
+{
     float4 pos : SV_Position;
+    [vk_location(0)]
     float3 color : COLOR0;
 };
 
-struct Vertex {
+struct Vertex
+{
     float3 position;
-    float3 color;
+    float4 color;
+}
+
+struct PushConstants
+{
+    float4x4 render_matrix;
+    Vertex *vertex_buffer;
 };
 
-static const Vertex VERTICES[3] = {
-    { { -0.5f, -0.5f,  0.0f }, { 1.0f, 0.0f, 0.0f } },
-    { { -0.5f,  0.5f,  0.0f }, { 0.0f, 1.0f, 0.0f } },
-    { {  0.5f,  0.5f,  0.0f }, { 0.0f, 0.0f, 1.0f } }
-};
+[vk_push_constant]
+PushConstants push_constants;
 
 [shader("vertex")]
-V2P vertexmain(uint vertex_index: SV_VertexID) {
-    let vertex = VERTICES[vertex_index];
-    
-    V2P output;
-    output.pos = float4(vertex.position, 1.0);
-    output.color = vertex.color;
-    
+VSOutput vertexmain(uint vertex_index: SV_VertexID)
+{
+    Vertex v = push_constants.vertex_buffer[vertex_index];
+
+    VSOutput output;
+    output.pos = mul(push_constants.render_matrix, float4(v.position, 1.0));
+    output.color = v.color.xyz;
     return output;
 }
 
-struct PSOutput {
-    [vk_location(0)]
-    float4 frag_color : COLOR0;
-};
-
 [shader("fragment")]
-PSOutput fragmentmain(V2P input) {
-    PSOutput output;
-    output.frag_color = float4(input.color, 1.0);
-    return output;
+float4 fragmentmain(VSOutput input) {
+    return float4(input.color, 1.0);
 }

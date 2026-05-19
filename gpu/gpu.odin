@@ -1088,21 +1088,28 @@ vulkan_shutdown :: proc()
 	vk.DestroyInstance(rs.instance, nil)
 }
 
-create_pipeline :: proc(module: vk.ShaderModule) -> (vk.PipelineLayout, vk.Pipeline)
-{
-	// Create pipelines and pipeline layouts
-	pipeline_layout_create_info := vk.PipelineLayoutCreateInfo {
-		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
-		pNext                  = nil,
-		flags                  = {},
-		setLayoutCount         = 0,
-		pSetLayouts            = nil,
-		pushConstantRangeCount = 0,
-		pPushConstantRanges    = nil,
-	}
+DEFAULT_PIPELINE_LAYOUT_INFO :: vk.PipelineLayoutCreateInfo {
+	sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+	pNext                  = nil,
+	flags                  = {},
+	setLayoutCount         = 0,
+	pSetLayouts            = nil,
+	pushConstantRangeCount = 0,
+	pPushConstantRanges    = nil,
+}
 
+create_pipeline :: proc(
+	module: vk.ShaderModule,
+	layout_info: vk.PipelineLayoutCreateInfo = DEFAULT_PIPELINE_LAYOUT_INFO,
+) -> (
+	vk.PipelineLayout,
+	vk.Pipeline,
+)
+{
+	layout_info := layout_info
+	// Create pipelines and pipeline layouts
 	pipeline_layout: vk.PipelineLayout
-	vk_check(vk.CreatePipelineLayout(rs.device, &pipeline_layout_create_info, nil, &pipeline_layout))
+	vk_check(vk.CreatePipelineLayout(rs.device, &layout_info, nil, &pipeline_layout))
 
 	pipelineInfo := vk.GraphicsPipelineCreateInfo {
 		sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
