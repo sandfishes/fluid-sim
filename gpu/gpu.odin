@@ -15,6 +15,15 @@ import vk "vendor:vulkan"
 // Slang bindings
 import sl "slang"
 
+
+when ODIN_OS == .Darwin {
+	// NOTE: just a bogus import of the system library,
+	// needed so we can add a linker flag to point to /usr/local/lib (where vulkan is installed by default)
+	// when trying to load vulkan.
+	@(require, extra_linker_flags = "-rpath /usr/local/lib")
+	foreign import __ "system:System.framework"
+}
+
 /* Ensure that slang compilation succeeded without any errors */
 slang_check :: #force_inline proc(#any_int result: int, loc := #caller_location)
 {
@@ -613,8 +622,7 @@ init_vulkan :: proc()
 	{
 		// Loads vulkan api functions needed to create an instance
 		vk.load_proc_addresses(rawptr(glfw.GetInstanceProcAddress))
-		assert(vk.GetInstanceProcAddr != nil) // Check that the functions are actually loaded
-
+		assert(vk.GetInstanceProcAddr != nil, "Vulkan function pointers not loaded")
 		glfw_extensions := glfw.GetRequiredInstanceExtensions()
 		extension_count := len(glfw_extensions)
 
@@ -660,7 +668,7 @@ init_vulkan :: proc()
 		}
 
 		when ODIN_OS == .Darwin {
-			create_info.flags = {vk.InstanceCreateFlag.ENUMERATE_PORTABILITY_KHR}
+			create_info.flags |= {.ENUMERATE_PORTABILITY_KHR}
 		}
 
 		vk_check(vk.CreateInstance(&create_info, nil, &rs.instance))

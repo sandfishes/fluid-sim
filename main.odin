@@ -44,6 +44,7 @@ main :: proc()
 		glfw.Init()
 		glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
 		glfw.WindowHint(glfw.RESIZABLE, glfw.FALSE)
+
 		rs.window = glfw.CreateWindow(800, 600, "Hello Triangle", nil, nil)
 		gpu.init_vulkan()
 
@@ -73,7 +74,6 @@ main :: proc()
 	}
 
 	vertex_buffer := gpu.create_buffer(auto_cast size_of(vertices), {.VERTEX_BUFFER, .TRANSFER_DST})
-	gpu.staging_write_buffer_slice(&vertex_buffer, vertices[:])
 	mesh := Buffer_Struct{indices_buffer, vertex_buffer, 0}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
 		sType  = .BUFFER_DEVICE_ADDRESS_INFO,
@@ -144,8 +144,9 @@ main :: proc()
 		}
 
 		vk.CmdPushConstants(cmd, rs.pipeline_layout, {.VERTEX}, 0, size_of(GPU_Draw_Push_Constants), &push_constants)
-		vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
+		gpu.staging_write_buffer_slice(&vertex_buffer, vertices[:]) // Why every frame?
 
+		vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
 		// Draw triangle
 		vk.CmdDrawIndexed(cmd, 3, 1, 0, 0, 0)
 
