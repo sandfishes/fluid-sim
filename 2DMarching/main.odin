@@ -1,11 +1,13 @@
 package marching2d
 
+import "core:sys/info"
 import geom "geometry"
 
 import "../gpu"
 
 import la "core:math/linalg"
 import "core:os"
+import "core:time"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
@@ -25,50 +27,87 @@ Vertex :: struct {
 	col: [3]f32,
 }
 
+Point :: struct {
+	pos:          [2]f32,
+	velocity:     [2]f32,
+	acceleration: [2]f32,
+}
+
+Simulation :: struct {
+	vertices:                [dynamic]Vertex, //(change to instances later)
+	indices:                 [dynamic]u32,
+	gpu_constants:           GPU_Draw_Push_Constants,
+	buffers:                 Buffer_Struct,
+
+	// Hot reloading info
+	current_last_write_time: time.Time,
+
+	// Fluid particles
+	particles:               #soa[dynamic]Point,
+}
+
+sim: Simulation
 
 main :: proc()
 {
 	rs: ^gpu.Renderer_State = &gpu.rs
 	// set up the window and Vulkan
-
-	// TODO move this layout info somewhere
-
-
-	{
-		glfw.Init()
-		glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
-		glfw.WindowHint(glfw.RESIZABLE, glfw.FALSE)
-
-		rs.window = glfw.CreateWindow(800, 600, "Hello Triangle", nil, nil)
-		gpu.init_vulkan()
-
-		// Load shaders
-		module: vk.ShaderModule = gpu.compile_shader_module(
-			"triangle.slang",
-			"vertexmain",
-			"fragmentmain",
-		)
-		create_pipeline(module)
-		assert(rs.pipeline != 0, "Couldn't load shaders!")
-	}
-
-	current_last_write_time, ok := os.last_write_time_by_name("triangle.slang")
-	assert(ok == nil)
-
-
-	vertices := make([dynamic]Vertex)
-	indices := make([dynamic]u32)
-	draw_circle(&vertices, &indices, {0, 0}, 1.0, COLOR_BLUE)
+	vk_setup()
 
 	// Create index buffer
+
+	init_sim()
+	for !glfw.WindowShouldClose(rs.window) {
+		glfw.PollEvents()
+
+		cmd: vk.CommandBuffer = vk_frame_setup()
+
+		update_sim()
+
+		vk.CmdPushConstants(
+			cmd,
+			rs.pipeline_layout,
+			{.VERTEX},
+			0,
+			size_of(GPU_Draw_Push_Constants),
+			&sim.gpu_constants,
+		)
+
+		gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
+		vk.CmdBindIndexBuffer(cmd, sim.buffers.index_buffer.buffer, 0, .UINT32)
+
+		// Draw triangle
+		vk.CmdDrawIndexed(cmd, u32(len(sim.indices)), 1, 0, 0, 0)
+
+		vk_frame_end(cmd)
+
+		rs.frame_number += 1
+		free_all(context.temp_allocator)
+	}
+	cleanup()
+}
+
+update_sim :: proc()
+{
+	for particle in sim.particles {
+		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
+	}
+}
+
+init_sim :: proc()
+{
+	rs := &gpu.rs
+	sim.particles = make(#soa[dynamic]Point)
+	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
+	sim.indices = make([dynamic]u32, context.temp_allocator)
 	indices_buffer := gpu.create_buffer(
-		auto_cast (size_of(u32) * len(indices)),
+		auto_cast (size_of(u32) * len(sim.indices)),
 		{.INDEX_BUFFER, .TRANSFER_DST},
 	)
-	gpu.staging_write_buffer_slice(&indices_buffer, indices[:])
+	gpu.staging_write_buffer_slice(&indices_buffer, sim.indices[:])
 
 	vertex_buffer := gpu.create_buffer(
-		auto_cast (size_of(Vertex) * len(vertices)),
+		auto_cast (size_of(Vertex) * len(sim.vertices)),
 		{.VERTEX_BUFFER, .TRANSFER_DST},
 	)
 	mesh := Buffer_Struct{indices_buffer, vertex_buffer, 0}
@@ -77,144 +116,127 @@ main :: proc()
 		buffer = mesh.vertex_buffer.buffer,
 	}
 	mesh.vertex_buffer_address = vk.GetBufferDeviceAddress(rs.device, &vertex_buffer_address_info)
-
-
-	for !glfw.WindowShouldClose(rs.window) {
-		glfw.PollEvents()
-
-		last_write_time, err := os.last_write_time_by_name("triangle.slang")
-
-		// Hot reload shader
-		{
-			if err == nil && current_last_write_time != last_write_time {
-				vk.DestroyPipelineLayout(rs.device, rs.pipeline_layout, nil)
-				vk.DestroyPipeline(rs.device, rs.pipeline, nil)
-				for i in 0 ..< gpu.FRAME_OVERLAP {
-					gpu.vk_check(
-						vk.WaitForFences(
-							rs.device,
-							1,
-							&rs.frames[i].render_fence,
-							true,
-							1_000_000_000,
-						),
-					)
-				}
-
-				module: vk.ShaderModule = gpu.compile_shader_module(
-					"triangle.slang",
-					"vertexmain",
-					"fragmentmain",
-				)
-				create_pipeline(module)
-				assert(rs.pipeline != 0, "Couldn't load shaders!")
-				current_last_write_time = last_write_time
-			}
-		}
-
-		// Wait until we can access the current frame
-		{
-			gpu.vk_check(
-				vk.WaitForFences(
-					rs.device,
-					1,
-					&gpu.current_frame().render_fence,
-					true,
-					1_000_000_000,
-				),
-			)
-			gpu.vk_check(
-				vk.AcquireNextImageKHR(
-					rs.device,
-					rs.swapchain,
-					1_000_000_000,
-					gpu.current_frame().swapchain_semaphore,
-					0,
-					&rs.swapchain_image_index,
-				),
-			)
-			rs.draw_extent.width = rs.draw_image.extent.width
-			rs.draw_extent.height = rs.draw_image.extent.height
-			gpu.vk_check(vk.ResetFences(rs.device, 1, &gpu.current_frame().render_fence))
-		}
-
-		cmd := gpu.current_frame().main_command_buffer
-		// reset and init the command buffer
-		{
-			gpu.vk_check(
-				vk.ResetCommandBuffer(
-					gpu.current_frame().main_command_buffer,
-					{.RELEASE_RESOURCES},
-				),
-			)
-			cmd_begin_info := vk.CommandBufferBeginInfo {
-				sType            = .COMMAND_BUFFER_BEGIN_INFO,
-				pNext            = nil,
-				pInheritanceInfo = nil,
-				flags            = {.ONE_TIME_SUBMIT},
-			}
-			gpu.vk_check(vk.BeginCommandBuffer(cmd, &cmd_begin_info))
-		}
-
-		// Start drawing
-		gpu.begin_render_pass()
-
-		vk.CmdBindPipeline(cmd, .GRAPHICS, rs.pipeline)
-
-		push_constants := GPU_Draw_Push_Constants {
-			world_matrix  = la.MATRIX4F32_IDENTITY,
-			vertex_buffer = mesh.vertex_buffer_address,
-		}
-
-		vk.CmdPushConstants(
-			cmd,
-			rs.pipeline_layout,
-			{.VERTEX},
-			0,
-			size_of(GPU_Draw_Push_Constants),
-			&push_constants,
-		)
-		gpu.staging_write_buffer_slice(&vertex_buffer, vertices[:]) // Why every frame?
-
-		vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
-		// Draw triangle
-		vk.CmdDrawIndexed(cmd, u32(len(indices)), 1, 0, 0, 0)
-
-		vk.CmdEndRenderingKHR(cmd)
-
-		// End drawing
-		gpu.end_render_pass()
-
-		// present the swapchain to the screen
-		{
-			present_info := vk.PresentInfoKHR {
-				sType              = .PRESENT_INFO_KHR,
-				pSwapchains        = &rs.swapchain,
-				swapchainCount     = 1,
-				pWaitSemaphores    = &gpu.current_frame().render_semaphore,
-				waitSemaphoreCount = 1,
-				pImageIndices      = &rs.swapchain_image_index,
-			}
-			gpu.vk_check(vk.QueuePresentKHR(rs.graphics_queue, &present_info))
-		}
-
-		rs.frame_number += 1
+	width, height := glfw.GetFramebufferSize(rs.window)
+	sim.gpu_constants = GPU_Draw_Push_Constants {
+		world_matrix  = la.matrix_ortho3d(0, f32(width), 0, f32(height), -1, 100),
+		vertex_buffer = mesh.vertex_buffer_address,
 	}
 
-	// Cleanup our stuff
-	vk.DeviceWaitIdle(rs.device)
-
-	vk.DestroyBuffer(rs.device, indices_buffer.buffer, nil)
-	vk.FreeMemory(rs.device, indices_buffer.memory, nil)
-
-	vk.DestroyPipeline(rs.device, rs.pipeline, nil)
-	vk.DestroyPipelineLayout(rs.device, rs.pipeline_layout, nil)
-
-	// Cleanup rest of vulkan
-	gpu.vulkan_shutdown()
-
+	// Add a random point onto the screen
+	append_soa(&sim.particles, Point{{50, 50}, {0, 0}, {0, 0}})
 }
 
+vk_setup :: proc()
+{
+	rs := &gpu.rs
+	glfw.Init()
+	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
+	glfw.WindowHint(glfw.RESIZABLE, glfw.FALSE)
+
+	rs.window = glfw.CreateWindow(800, 600, "2D Simulation", nil, nil)
+	gpu.init_vulkan()
+
+	// Load shaders
+	module: vk.ShaderModule = gpu.compile_shader_module(
+		"triangle.slang",
+		"vertexmain",
+		"fragmentmain",
+	)
+	create_pipeline(module)
+	assert(rs.pipeline != 0, "Couldn't load shaders!")
+	sim.current_last_write_time, _ = os.last_write_time_by_name("triangle.slang")
+}
+
+vk_frame_setup :: proc() -> vk.CommandBuffer
+{
+
+	rs := &gpu.rs
+	last_write_time, err := os.last_write_time_by_name("triangle.slang")
+
+	// Hot reload shader
+
+	if err == nil && sim.current_last_write_time != last_write_time {
+		vk.DestroyPipelineLayout(rs.device, rs.pipeline_layout, nil)
+		vk.DestroyPipeline(rs.device, rs.pipeline, nil)
+		for i in 0 ..< gpu.FRAME_OVERLAP {
+			gpu.vk_check(
+				vk.WaitForFences(rs.device, 1, &rs.frames[i].render_fence, true, 1_000_000_000),
+			)
+		}
+
+		module: vk.ShaderModule = gpu.compile_shader_module(
+			"triangle.slang",
+			"vertexmain",
+			"fragmentmain",
+		)
+		create_pipeline(module)
+		assert(rs.pipeline != 0, "Couldn't load shaders!")
+		sim.current_last_write_time = last_write_time
+	}
+
+
+	// Wait until we can access the current frame
+
+	gpu.vk_check(
+		vk.WaitForFences(rs.device, 1, &gpu.current_frame().render_fence, true, 1_000_000_000),
+	)
+	gpu.vk_check(
+		vk.AcquireNextImageKHR(
+			rs.device,
+			rs.swapchain,
+			1_000_000_000,
+			gpu.current_frame().swapchain_semaphore,
+			0,
+			&rs.swapchain_image_index,
+		),
+	)
+	rs.draw_extent.width = rs.draw_image.extent.width
+	rs.draw_extent.height = rs.draw_image.extent.height
+	gpu.vk_check(vk.ResetFences(rs.device, 1, &gpu.current_frame().render_fence))
+
+
+	cmd := gpu.current_frame().main_command_buffer
+	// reset and init the command buffer
+
+	gpu.vk_check(
+		vk.ResetCommandBuffer(gpu.current_frame().main_command_buffer, {.RELEASE_RESOURCES}),
+	)
+	cmd_begin_info := vk.CommandBufferBeginInfo {
+		sType            = .COMMAND_BUFFER_BEGIN_INFO,
+		pNext            = nil,
+		pInheritanceInfo = nil,
+		flags            = {.ONE_TIME_SUBMIT},
+	}
+	gpu.vk_check(vk.BeginCommandBuffer(cmd, &cmd_begin_info))
+
+
+	// Start drawing
+	gpu.begin_render_pass()
+
+	vk.CmdBindPipeline(cmd, .GRAPHICS, rs.pipeline)
+
+	return cmd
+}
+
+vk_frame_end :: proc(cmd: vk.CommandBuffer)
+{
+	rs := &gpu.rs
+	vk.CmdEndRenderingKHR(cmd)
+
+	// End drawing
+	gpu.end_render_pass()
+
+	// present the swapchain to the screen
+	present_info := vk.PresentInfoKHR {
+		sType              = .PRESENT_INFO_KHR,
+		pSwapchains        = &rs.swapchain,
+		swapchainCount     = 1,
+		pWaitSemaphores    = &gpu.current_frame().render_semaphore,
+		waitSemaphoreCount = 1,
+		pImageIndices      = &rs.swapchain_image_index,
+	}
+	gpu.vk_check(vk.QueuePresentKHR(rs.graphics_queue, &present_info))
+}
 
 draw_circle :: proc(
 	vertex_buffer: ^[dynamic]Vertex,
@@ -255,4 +277,24 @@ create_pipeline :: proc(module: vk.ShaderModule)
 	}
 
 	rs.pipeline_layout, rs.pipeline = gpu.create_pipeline(module, pipeline_layout_info)
+}
+
+cleanup :: proc()
+{
+	rs := &gpu.rs
+	// Cleanup our stuff
+	vk.DeviceWaitIdle(rs.device)
+
+	vk.DestroyBuffer(rs.device, sim.buffers.index_buffer.buffer, nil)
+	vk.FreeMemory(rs.device, sim.buffers.index_buffer.memory, nil)
+
+	vk.DestroyBuffer(rs.device, sim.buffers.vertex_buffer.buffer, nil)
+	vk.FreeMemory(rs.device, sim.buffers.vertex_buffer.memory, nil)
+
+	vk.DestroyPipeline(rs.device, rs.pipeline, nil)
+	vk.DestroyPipelineLayout(rs.device, rs.pipeline_layout, nil)
+
+	// Cleanup rest of vulkan
+	gpu.vulkan_shutdown()
+
 }
