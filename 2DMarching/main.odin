@@ -73,7 +73,6 @@ main :: proc()
 			&sim.gpu_constants,
 		)
 
-		gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 		vk.CmdBindIndexBuffer(cmd, sim.buffers.index_buffer.buffer, 0, .UINT32)
 
 		// Draw triangle
@@ -92,8 +91,11 @@ update_sim :: proc()
 	for particle in sim.particles {
 		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
 	}
+	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
+	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
+NUM_PARTICLES :: 500
 init_sim :: proc()
 {
 	rs := &gpu.rs
@@ -101,14 +103,13 @@ init_sim :: proc()
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
 	indices_buffer := gpu.create_buffer(
-		auto_cast (size_of(u32) * len(sim.indices)),
+		auto_cast (size_of(u32) * NUM_PARTICLES),
 		{.INDEX_BUFFER, .TRANSFER_DST},
 	)
-	gpu.staging_write_buffer_slice(&indices_buffer, sim.indices[:])
 
 	vertex_buffer := gpu.create_buffer(
-		auto_cast (size_of(Vertex) * len(sim.vertices)),
-		{.VERTEX_BUFFER, .TRANSFER_DST},
+		auto_cast (size_of(Vertex) * NUM_PARTICLES),
+		{.VERTEX_BUFFER, .TRANSFER_DST, .SHADER_DEVICE_ADDRESS},
 	)
 	mesh := Buffer_Struct{indices_buffer, vertex_buffer, 0}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {

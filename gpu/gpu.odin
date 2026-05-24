@@ -72,7 +72,10 @@ slang_check :: #force_inline proc(#any_int result: int, loc := #caller_location)
 diagnostics_check :: #force_inline proc(diagnostics: ^sl.IBlob, loc := #caller_location)
 {
 	if diagnostics != nil {
-		buffer := slice.bytes_from_ptr(diagnostics->getBufferPointer(), int(diagnostics->getBufferSize()))
+		buffer := slice.bytes_from_ptr(
+			diagnostics->getBufferPointer(),
+			int(diagnostics->getBufferSize()),
+		)
 		assert(false, string(buffer), loc)
 	}
 }
@@ -93,7 +96,9 @@ compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.S
 		profile       = rs.slang_global_session->findProfile("sm_6_0"),
 	}
 
-	compiler_option_entries := [?]sl.CompilerOptionEntry{{name = .VulkanUseEntryPointName, value = {intValue0 = 1}}}
+	compiler_option_entries := [?]sl.CompilerOptionEntry {
+		{name = .VulkanUseEntryPointName, value = {intValue0 = 1}},
+	}
 
 	session_desc := sl.SessionDesc {
 		structureSize            = size_of(sl.SessionDesc),
@@ -137,7 +142,12 @@ compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.S
 	components := [3]^sl.IComponentType{module, vertex_entry, fragment_entry}
 
 	linked_program: ^sl.IComponentType
-	r = session->createCompositeComponentType(&components[0], len(components), &linked_program, &diagnostics)
+	r = session->createCompositeComponentType(
+		&components[0],
+		len(components),
+		&linked_program,
+		&diagnostics,
+	)
 	diagnostics_check(diagnostics)
 	slang_check(r)
 
@@ -195,17 +205,25 @@ REQUIRED_VK_12_FEATURES := vk.PhysicalDeviceVulkan12Features {
 
 REQUIRED_VK_13_FEATURES := vk.PhysicalDeviceVulkan13Features {
 	sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+	pNext            = &REQUIRED_BUFFER_ADDRESS_FEATURES,
 	dynamicRendering = true,
 	synchronization2 = true,
 }
 
+REQUIRED_BUFFER_ADDRESS_FEATURES := vk.PhysicalDeviceBufferDeviceAddressFeaturesKHR {
+	sType               = .PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR,
+	bufferDeviceAddress = true,
+}
+
 // Set required extensions to support.
 DEVICE_EXTENSIONS := []cstring {
+	vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
 	vk.KHR_SWAPCHAIN_EXTENSION_NAME,
 	vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME, // Enabled by default in 1.3
 	vk.KHR_COPY_COMMANDS_2_EXTENSION_NAME, // Enabled by default in 1.3
 	vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME, // Enabled by default in 1.3
 	vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, // Enabled by default in 1.3
+	vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 }
 // Set validation layers to enable.
 VALIDATION_LAYERS := []cstring{"VK_LAYER_KHRONOS_validation"}
@@ -392,7 +410,8 @@ find_memory_type :: proc(
 	// is a superset of the request properties.
 	i: u32
 	for i in 0 ..< mem_properties.memoryTypeCount {
-		if (type_filter & (1 << i)) != 0 && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties {
+		if (type_filter & (1 << i)) != 0 &&
+		   (mem_properties.memoryTypes[i].propertyFlags & properties) == properties {
 			return i
 		}
 	}
@@ -439,7 +458,11 @@ create_image :: proc(
 		alloc_info := vk.MemoryAllocateInfo {
 			sType           = .MEMORY_ALLOCATE_INFO,
 			allocationSize  = mem_requirements.size,
-			memoryTypeIndex = find_memory_type(rs.physical_device, mem_requirements.memoryTypeBits, properties),
+			memoryTypeIndex = find_memory_type(
+				rs.physical_device,
+				mem_requirements.memoryTypeBits,
+				properties,
+			),
 		}
 		vk_check(vk.AllocateMemory(rs.device, &alloc_info, nil, &gpu_image.memory))
 		vk.BindImageMemory(rs.device, gpu_image.image, gpu_image.memory, 0)
@@ -479,7 +502,7 @@ create_buffer :: proc(
 	buffer_info := vk.BufferCreateInfo {
 		sType       = .BUFFER_CREATE_INFO,
 		size        = alloc_size,
-		usage       = usage,
+		usage       = usage + {.SHADER_DEVICE_ADDRESS_KHR},
 		sharingMode = .EXCLUSIVE,
 	}
 
@@ -493,8 +516,16 @@ create_buffer :: proc(
 
 	alloc_info := vk.MemoryAllocateInfo {
 		sType           = .MEMORY_ALLOCATE_INFO,
+		pNext           = &vk.MemoryAllocateFlagsInfoKHR {
+			sType = .MEMORY_ALLOCATE_FLAGS_INFO_KHR,
+			flags = {.DEVICE_ADDRESS_KHR},
+		},
 		allocationSize  = mem_requirements.size,
-		memoryTypeIndex = find_memory_type(rs.physical_device, mem_requirements.memoryTypeBits, properties),
+		memoryTypeIndex = find_memory_type(
+			rs.physical_device,
+			mem_requirements.memoryTypeBits,
+			properties,
+		),
 	}
 
 	vk_check(vk.AllocateMemory(rs.device, &alloc_info, nil, &gpu_buffer.memory))
@@ -505,7 +536,12 @@ create_buffer :: proc(
 }
 
 /* Writes to the buffer with the input slice at offset. */
-write_buffer_slice :: proc(buffer: ^GPUBuffer, in_data: []$T, offset: vk.DeviceSize = 0, loc := #caller_location)
+write_buffer_slice :: proc(
+	buffer: ^GPUBuffer,
+	in_data: []$T,
+	offset: vk.DeviceSize = 0,
+	loc := #caller_location,
+)
 {
 	size := size_of(T) * len(in_data)
 	assert(
@@ -535,7 +571,11 @@ staging_write_buffer_slice :: proc(
 		loc,
 	)
 
-	staging: GPUBuffer = create_buffer(vk.DeviceSize(size), {.TRANSFER_SRC}, {.HOST_VISIBLE, .HOST_COHERENT})
+	staging: GPUBuffer = create_buffer(
+		vk.DeviceSize(size),
+		{.TRANSFER_SRC},
+		{.HOST_VISIBLE, .HOST_COHERENT},
+	)
 	defer
 	{
 		vk.DestroyBuffer(rs.device, staging.buffer, nil)
@@ -700,7 +740,14 @@ init_vulkan :: proc()
 			pUserData       = nil,
 		}
 
-		vk_check(vk.CreateDebugUtilsMessengerEXT(rs.instance, &debug_utils_create_info, nil, &rs.debug_messenger))
+		vk_check(
+			vk.CreateDebugUtilsMessengerEXT(
+				rs.instance,
+				&debug_utils_create_info,
+				nil,
+				&rs.debug_messenger,
+			),
+		)
 	}
 
 
@@ -758,7 +805,12 @@ init_vulkan :: proc()
 		dev_extension_props := make([]vk.ExtensionProperties, n_dev_ext)
 		defer delete(dev_extension_props)
 
-		vk.EnumerateDeviceExtensionProperties(rs.physical_device, nil, &n_dev_ext, raw_data(dev_extension_props))
+		vk.EnumerateDeviceExtensionProperties(
+			rs.physical_device,
+			nil,
+			&n_dev_ext,
+			raw_data(dev_extension_props),
+		)
 
 		for &ext in &dev_extension_props {
 			// NOTE: `KHR_PORTABILITY_SUBSET_EXTENSION_NAME` is not defined by
@@ -778,7 +830,11 @@ init_vulkan :: proc()
 
 		queue_families := make([]vk.QueueFamilyProperties, queue_family_count)
 		defer delete(queue_families)
-		vk.GetPhysicalDeviceQueueFamilyProperties(rs.physical_device, &queue_family_count, raw_data(queue_families))
+		vk.GetPhysicalDeviceQueueFamilyProperties(
+			rs.physical_device,
+			&queue_family_count,
+			raw_data(queue_families),
+		)
 
 		has_graphics := false
 
@@ -834,21 +890,40 @@ init_vulkan :: proc()
 		{
 			details: SwapChainSupportDetails
 
-			vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(rs.physical_device, rs.surface, &details.capabilities)
+			vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(
+				rs.physical_device,
+				rs.surface,
+				&details.capabilities,
+			)
 			// Formats
 			{
 				format_count: u32
-				vk.GetPhysicalDeviceSurfaceFormatsKHR(rs.physical_device, rs.surface, &format_count, nil)
+				vk.GetPhysicalDeviceSurfaceFormatsKHR(
+					rs.physical_device,
+					rs.surface,
+					&format_count,
+					nil,
+				)
 
 				formats := make([]vk.SurfaceFormatKHR, format_count)
-				vk.GetPhysicalDeviceSurfaceFormatsKHR(rs.physical_device, rs.surface, &format_count, raw_data(formats))
+				vk.GetPhysicalDeviceSurfaceFormatsKHR(
+					rs.physical_device,
+					rs.surface,
+					&format_count,
+					raw_data(formats),
+				)
 
 				details.formats = formats
 			}
 			// Present modes
 			{
 				present_mode_count: u32
-				vk.GetPhysicalDeviceSurfacePresentModesKHR(rs.physical_device, rs.surface, &present_mode_count, nil)
+				vk.GetPhysicalDeviceSurfacePresentModesKHR(
+					rs.physical_device,
+					rs.surface,
+					&present_mode_count,
+					nil,
+				)
 
 				present_modes := make([]vk.PresentModeKHR, present_mode_count)
 				vk.GetPhysicalDeviceSurfacePresentModesKHR(
@@ -866,10 +941,16 @@ init_vulkan :: proc()
 
 		/* This returns true if a surface format was found that matches the requirements.
 		 Otherwise, this returns the first surface format and false. */
-		choose_swap_surface_format :: proc(available_formats: []vk.SurfaceFormatKHR) -> (vk.SurfaceFormatKHR, bool)
+		choose_swap_surface_format :: proc(
+			available_formats: []vk.SurfaceFormatKHR,
+		) -> (
+			vk.SurfaceFormatKHR,
+			bool,
+		)
 		{
 			for surface_format in available_formats {
-				if surface_format.format == .B8G8R8A8_UNORM && surface_format.colorSpace == .SRGB_NONLINEAR {
+				if surface_format.format == .B8G8R8A8_UNORM &&
+				   surface_format.colorSpace == .SRGB_NONLINEAR {
 					return surface_format, true
 				}
 			}
@@ -877,13 +958,18 @@ init_vulkan :: proc()
 			return available_formats[0], false
 		}
 
-		choose_swap_present_mode :: proc(available_present_modes: []vk.PresentModeKHR) -> vk.PresentModeKHR
+		choose_swap_present_mode :: proc(
+			available_present_modes: []vk.PresentModeKHR,
+		) -> vk.PresentModeKHR
 		{
 			return .FIFO
 		}
 
 		/* If there is no current extent, then get extent form the gfw framebuffer size */
-		choose_swap_extent :: proc(window: glfw.WindowHandle, capabilities: ^vk.SurfaceCapabilitiesKHR) -> vk.Extent2D
+		choose_swap_extent :: proc(
+			window: glfw.WindowHandle,
+			capabilities: ^vk.SurfaceCapabilitiesKHR,
+		) -> vk.Extent2D
 		{
 			if (capabilities.currentExtent.width != max(u32)) {
 				return capabilities.currentExtent
@@ -952,7 +1038,12 @@ init_vulkan :: proc()
 
 		vk.GetSwapchainImagesKHR(rs.device, rs.swapchain, &image_count, nil)
 		rs.swapchain_images = make([]vk.Image, image_count)
-		vk.GetSwapchainImagesKHR(rs.device, rs.swapchain, &image_count, raw_data(rs.swapchain_images))
+		vk.GetSwapchainImagesKHR(
+			rs.device,
+			rs.swapchain,
+			&image_count,
+			raw_data(rs.swapchain_images),
+		)
 
 		rs.swapchain_image_format = surface_format.format
 		rs.swapchain_extent = extent
@@ -975,7 +1066,9 @@ init_vulkan :: proc()
 				},
 			}
 
-			vk_check(vk.CreateImageView(rs.device, &create_info, nil, &rs.swapchain_image_views[i]))
+			vk_check(
+				vk.CreateImageView(rs.device, &create_info, nil, &rs.swapchain_image_views[i]),
+			)
 		}
 	}
 
@@ -985,7 +1078,12 @@ init_vulkan :: proc()
 
 		draw_image_format: vk.Format = .R32G32B32A32_SFLOAT
 		draw_image_extent := vk.Extent3D{u32(x), u32(y), 1}
-		draw_image_usages := vk.ImageUsageFlags{.TRANSFER_SRC, .TRANSFER_DST, .STORAGE, .COLOR_ATTACHMENT}
+		draw_image_usages := vk.ImageUsageFlags {
+			.TRANSFER_SRC,
+			.TRANSFER_DST,
+			.STORAGE,
+			.COLOR_ATTACHMENT,
+		}
 
 		rs.draw_image = create_image(draw_image_format, draw_image_extent, draw_image_usages)
 		create_image_view(rs.device, &rs.draw_image, {.COLOR})
@@ -1004,7 +1102,14 @@ init_vulkan :: proc()
 		}
 
 		for i in 0 ..< FRAME_OVERLAP {
-			vk_check(vk.CreateCommandPool(rs.device, &command_pool_info, nil, &rs.frames[i].command_pool))
+			vk_check(
+				vk.CreateCommandPool(
+					rs.device,
+					&command_pool_info,
+					nil,
+					&rs.frames[i].command_pool,
+				),
+			)
 
 			cmd_alloc_info := vk.CommandBufferAllocateInfo {
 				sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1014,7 +1119,13 @@ init_vulkan :: proc()
 				level              = .PRIMARY,
 			}
 
-			vk_check(vk.AllocateCommandBuffers(rs.device, &cmd_alloc_info, &rs.frames[i].main_command_buffer))
+			vk_check(
+				vk.AllocateCommandBuffers(
+					rs.device,
+					&cmd_alloc_info,
+					&rs.frames[i].main_command_buffer,
+				),
+			)
 		}
 
 		vk_check(vk.CreateCommandPool(rs.device, &command_pool_info, nil, &rs.imm_command_pool))
@@ -1044,8 +1155,22 @@ init_vulkan :: proc()
 		for &frame in rs.frames {
 			vk_check(vk.CreateFence(rs.device, &fence_create_info, nil, &frame.render_fence))
 
-			vk_check(vk.CreateSemaphore(rs.device, &semaphore_create_info, nil, &frame.swapchain_semaphore))
-			vk_check(vk.CreateSemaphore(rs.device, &semaphore_create_info, nil, &frame.render_semaphore))
+			vk_check(
+				vk.CreateSemaphore(
+					rs.device,
+					&semaphore_create_info,
+					nil,
+					&frame.swapchain_semaphore,
+				),
+			)
+			vk_check(
+				vk.CreateSemaphore(
+					rs.device,
+					&semaphore_create_info,
+					nil,
+					&frame.render_semaphore,
+				),
+			)
 		}
 
 		vk.CreateFence(rs.device, &fence_create_info, nil, &rs.imm_fence)
@@ -1129,7 +1254,12 @@ create_pipeline :: proc(
 		},
 		pStages             = raw_data(
 			[]vk.PipelineShaderStageCreateInfo {
-				{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = module, pName = "vertexmain"},
+				{
+					sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+					stage = {.VERTEX},
+					module = module,
+					pName = "vertexmain",
+				},
 				{
 					sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 					stage = {.FRAGMENT},
@@ -1145,7 +1275,11 @@ create_pipeline :: proc(
 			topology = .TRIANGLE_LIST,
 			primitiveRestartEnable = false,
 		},
-		pViewportState      = &{sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO, viewportCount = 1, scissorCount = 1},
+		pViewportState      = &{
+			sType = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+			viewportCount = 1,
+			scissorCount = 1,
+		},
 		pRasterizationState = &{
 			sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 			polygonMode = .FILL,
@@ -1257,17 +1391,40 @@ end_render_pass :: proc()
 {
 	cmd := current_frame().main_command_buffer
 	transition_image(cmd, rs.draw_image.image, .COLOR_ATTACHMENT_OPTIMAL, .TRANSFER_SRC_OPTIMAL)
-	transition_image(cmd, rs.swapchain_images[rs.swapchain_image_index], .UNDEFINED, .TRANSFER_DST_OPTIMAL)
+	transition_image(
+		cmd,
+		rs.swapchain_images[rs.swapchain_image_index],
+		.UNDEFINED,
+		.TRANSFER_DST_OPTIMAL,
+	)
 
 	// Copy the data from the draw image into the current swapchain image
 	{
 		blit_region := vk.ImageBlit2 {
 			sType = .IMAGE_BLIT_2,
 			pNext = nil,
-			srcSubresource = {aspectMask = {.COLOR}, baseArrayLayer = 0, layerCount = 1, mipLevel = 0},
-			srcOffsets = {1 = {x = i32(rs.draw_extent.width), y = i32(rs.draw_extent.height), z = 1}},
-			dstSubresource = {aspectMask = {.COLOR}, baseArrayLayer = 0, layerCount = 1, mipLevel = 0},
-			dstOffsets = {1 = {x = i32(rs.swapchain_extent.width), y = i32(rs.swapchain_extent.height), z = 1}},
+			srcSubresource = {
+				aspectMask = {.COLOR},
+				baseArrayLayer = 0,
+				layerCount = 1,
+				mipLevel = 0,
+			},
+			srcOffsets = {
+				1 = {x = i32(rs.draw_extent.width), y = i32(rs.draw_extent.height), z = 1},
+			},
+			dstSubresource = {
+				aspectMask = {.COLOR},
+				baseArrayLayer = 0,
+				layerCount = 1,
+				mipLevel = 0,
+			},
+			dstOffsets = {
+				1 = {
+					x = i32(rs.swapchain_extent.width),
+					y = i32(rs.swapchain_extent.height),
+					z = 1,
+				},
+			},
 		}
 		blit_info := vk.BlitImageInfo2 {
 			sType          = .BLIT_IMAGE_INFO_2,
@@ -1284,7 +1441,12 @@ end_render_pass :: proc()
 	}
 
 	// transition the swapchain image into present mode
-	transition_image(cmd, rs.swapchain_images[rs.swapchain_image_index], .TRANSFER_DST_OPTIMAL, .PRESENT_SRC_KHR)
+	transition_image(
+		cmd,
+		rs.swapchain_images[rs.swapchain_image_index],
+		.TRANSFER_DST_OPTIMAL,
+		.PRESENT_SRC_KHR,
+	)
 
 	// submit the command buffer
 	{
@@ -1325,3 +1487,4 @@ end_render_pass :: proc()
 		vk_check(vk.QueueSubmit2KHR(rs.graphics_queue, 1, &submit, current_frame().render_fence))
 	}
 }
+
