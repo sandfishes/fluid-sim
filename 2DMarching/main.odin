@@ -5,6 +5,7 @@ import geom "geometry"
 
 import "../gpu"
 
+import "core:fmt"
 import la "core:math/linalg"
 import "core:os"
 import "core:time"
@@ -88,30 +89,35 @@ main :: proc()
 
 update_sim :: proc()
 {
-	for particle in sim.particles {
-		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
-	}
-	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
-	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
+
+
 }
 
-NUM_PARTICLES :: 500
+NUM_PARTICLES :: 15
 init_sim :: proc()
 {
 	rs := &gpu.rs
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
-	indices_buffer := gpu.create_buffer(
-		auto_cast (size_of(u32) * NUM_PARTICLES),
+	append(&sim.particles, Point{{0, 0}, {0, 0}, {0, 0}})
+	for particle in sim.particles {
+		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
+	}
+	sim.buffers.index_buffer = gpu.create_buffer(
+		auto_cast (size_of(u32) * len(sim.indices)),
 		{.INDEX_BUFFER, .TRANSFER_DST},
 	)
 
-	vertex_buffer := gpu.create_buffer(
-		auto_cast (size_of(Vertex) * NUM_PARTICLES),
-		{.VERTEX_BUFFER, .TRANSFER_DST, .SHADER_DEVICE_ADDRESS},
+	sim.buffers.vertex_buffer = gpu.create_buffer(
+		auto_cast (size_of(Vertex) * len(sim.vertices)),
+		{.VERTEX_BUFFER, .TRANSFER_DST},
 	)
-	mesh := Buffer_Struct{indices_buffer, vertex_buffer, 0}
+	fmt.println(len(sim.indices))
+	fmt.println(len(sim.vertices))
+	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
+	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
+	mesh := Buffer_Struct{sim.buffers.index_buffer, sim.buffers.vertex_buffer, 0}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
 		sType  = .BUFFER_DEVICE_ADDRESS_INFO,
 		buffer = mesh.vertex_buffer.buffer,
@@ -247,8 +253,12 @@ draw_circle :: proc(
 	col: [3]f32,
 )
 {
+	fmt.println("Starting to draw circle. Will draw")
+	fmt.println(len(geom.CIRCLE_16_INDICES))
+	fmt.println("points!")
 	for circle_pos in geom.CIRCLE_16_POS { 	// I think this can be done with zipping
 		append(vertex_buffer, Vertex{pos + circle_pos * radius, col})
+
 	}
 	indices := geom.CIRCLE_16_INDICES
 	append_elems(index_buffer, ..indices[:])
@@ -299,3 +309,4 @@ cleanup :: proc()
 	gpu.vulkan_shutdown()
 
 }
+
