@@ -90,7 +90,11 @@ main :: proc()
 update_sim :: proc()
 {
 
-
+	for particle in sim.particles {
+		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
+	}
+	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
+	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
 NUM_PARTICLES :: 15
@@ -100,10 +104,10 @@ init_sim :: proc()
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
-	append(&sim.particles, Point{{0, 0}, {0, 0}, {0, 0}})
-	for particle in sim.particles {
-		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
+	for particle in 0 .. NUM_PARTICLES {
+		append(&sim.particles, Point{{0, 0}, {0, 0}, {0, 0}})
 	}
+
 	sim.buffers.index_buffer = gpu.create_buffer(
 		auto_cast (size_of(u32) * len(sim.indices)),
 		{.INDEX_BUFFER, .TRANSFER_DST},
@@ -113,10 +117,7 @@ init_sim :: proc()
 		auto_cast (size_of(Vertex) * len(sim.vertices)),
 		{.VERTEX_BUFFER, .TRANSFER_DST},
 	)
-	fmt.println(len(sim.indices))
-	fmt.println(len(sim.vertices))
-	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
-	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
+
 	mesh := Buffer_Struct{sim.buffers.index_buffer, sim.buffers.vertex_buffer, 0}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
 		sType  = .BUFFER_DEVICE_ADDRESS_INFO,
