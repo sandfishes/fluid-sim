@@ -26,7 +26,8 @@ VSOutput vertexmain(uint vertex_index: SV_VertexID)
     Vertex v = push_constants.vertex_buffer[vertex_index];
 
     VSOutput output;
-    output.pos = mul(push_constants.render_matrix, float4(v.position, 0.0, 1.0));
+    // output.pos = mul(push_constants.render_matrix, float4(v.position, 0.0, 1.0));
+    output.pos = mul(float4(v.position, 0.0, 1.0), push_constants.render_matrix);
     output.color = v.color;
     return output;
 }

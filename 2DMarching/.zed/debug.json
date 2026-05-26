@@ -1,0 +1,13 @@
+[
+  {
+    "adapter": "CodeLLDB",
+    "label": "odindebug",
+    "request": "launch",
+    "program": "debug",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "build": {
+      "command": "odin",
+      "args": ["build", "./2DMarching", "-debug", "-out:debug"],
+    },
+  },
+]

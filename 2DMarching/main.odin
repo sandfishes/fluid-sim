@@ -1,12 +1,13 @@
 package marching2d
 
+import "core:math/rand"
 import "core:sys/info"
 import geom "geometry"
 
 import "../gpu"
 
 import "core:fmt"
-import la "core:math/linalg"
+import glsl "core:math/linalg/glsl"
 import "core:os"
 import "core:time"
 import "vendor:glfw"
@@ -74,6 +75,9 @@ main :: proc()
 			&sim.gpu_constants,
 		)
 
+		buffers := [?]vk.Buffer{sim.buffers.vertex_buffer.buffer}
+		offsets := [?]vk.DeviceSize{0}
+		vk.CmdBindVertexBuffers(cmd, 0, 1, &buffers[0], &offsets[0])
 		vk.CmdBindIndexBuffer(cmd, sim.buffers.index_buffer.buffer, 0, .UINT32)
 
 		// Draw triangle
@@ -89,25 +93,32 @@ main :: proc()
 
 update_sim :: proc()
 {
-
+	free_all(context.temp_allocator)
+	clear(&sim.vertices)
+	clear(&sim.indices)
 	for particle in sim.particles {
-		draw_circle(&sim.vertices, &sim.indices, particle.pos, 1, {1, 1, 1})
+		draw_circle(&sim.vertices, &sim.indices, particle.pos, 50, {1, 1, 1})
 	}
 	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
-NUM_PARTICLES :: 15
+NUM_PARTICLES :: 31
 init_sim :: proc()
 {
 	rs := &gpu.rs
+	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
-	for particle in 0 .. NUM_PARTICLES {
-		append(&sim.particles, Point{{0, 0}, {0, 0}, {0, 0}})
+	for particle in 0 ..< NUM_PARTICLES {
+		append(
+			&sim.particles,
+			Point{{rand.float32() * f32(width), rand.float32() * f32(height)}, {0, 0}, {0, 0}},
+		)
+		// Preload the data so buffers are the correct size.
+		draw_circle(&sim.vertices, &sim.indices, {0, 0}, 0.025, {1, 1, 1})
 	}
-
 	sim.buffers.index_buffer = gpu.create_buffer(
 		auto_cast (size_of(u32) * len(sim.indices)),
 		{.INDEX_BUFFER, .TRANSFER_DST},
@@ -124,14 +135,11 @@ init_sim :: proc()
 		buffer = mesh.vertex_buffer.buffer,
 	}
 	mesh.vertex_buffer_address = vk.GetBufferDeviceAddress(rs.device, &vertex_buffer_address_info)
-	width, height := glfw.GetFramebufferSize(rs.window)
+
 	sim.gpu_constants = GPU_Draw_Push_Constants {
-		world_matrix  = la.matrix_ortho3d(0, f32(width), 0, f32(height), -1, 100),
+		world_matrix  = glsl.mat4Ortho3d(0, f32(width), 0, f32(height), -100, 100),
 		vertex_buffer = mesh.vertex_buffer_address,
 	}
-
-	// Add a random point onto the screen
-	append_soa(&sim.particles, Point{{50, 50}, {0, 0}, {0, 0}})
 }
 
 vk_setup :: proc()
@@ -254,17 +262,35 @@ draw_circle :: proc(
 	col: [3]f32,
 )
 {
-	fmt.println("Starting to draw circle. Will draw")
-	fmt.println(len(geom.CIRCLE_16_INDICES))
-	fmt.println("points!")
 	for circle_pos in geom.CIRCLE_16_POS { 	// I think this can be done with zipping
 		append(vertex_buffer, Vertex{pos + circle_pos * radius, col})
 
 	}
 	indices := geom.CIRCLE_16_INDICES
-	append_elems(index_buffer, ..indices[:])
+	start := u32(len(vertex_buffer))
+	for idx in geom.CIRCLE_16_INDICES {
+		append(index_buffer, start + idx)
+	}
 }
 
+draw_square :: proc(
+	vertex_buffer: ^[dynamic]Vertex,
+	index_buffer: ^[dynamic]u32,
+	pos: [2]f32,
+	length: f32,
+	col: [3]f32,
+)
+{
+	append_elems(
+		vertex_buffer,
+		Vertex{pos + {0, 0}, COLOR_BLUE},
+		Vertex{pos + {length, 0}, COLOR_BLUE},
+		Vertex{pos + {0, length}, COLOR_BLUE},
+		Vertex{pos + {length, length}, COLOR_BLUE},
+	)
+	start := u32(len(vertex_buffer))
+	append_elems(index_buffer, start, start + 2, start + 1, start + 3, start + 1, start + 2)
+}
 
 COLOR_BLUE :: [3]f32{0.2, 0.2, 0.8}
 
