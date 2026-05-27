@@ -155,13 +155,13 @@ update_sim :: proc(dt: f32)
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
-NUM_PARTICLES :: 310
+NUM_PARTICLES :: 3100
 init_sim :: proc()
 {
 	rs := &gpu.rs
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = f32(width), f32(height)
-	sim.radius = 20
+	sim.radius = 10
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
