@@ -1,7 +1,6 @@
 package marching2d
 
 import "core:math/rand"
-import "core:sys/info"
 import geom "geometry"
 
 import "../gpu"
@@ -38,6 +37,7 @@ Point :: struct {
 Simulation :: struct {
 	width, height:           f32,
 	radius:                  f32,
+	field_radius:            f32,
 	vertices:                [dynamic]Vertex, //(change to instances later)
 	indices:                 [dynamic]u32,
 	gpu_constants:           GPU_Draw_Push_Constants,
@@ -100,7 +100,7 @@ main :: proc()
 repulse :: proc(p1, p2: [2]f32) -> [2]f32
 {
 	// repulse p1 away from p2 with velocity proportional to how close the points are
-	return glsl.normalize(p1 - p2) * (2 * sim.radius - glsl.distance(p1, p2))
+	return glsl.normalize(p1 - p2) * (2 * sim.field_radius - glsl.distance(p1, p2))
 }
 
 update_sim :: proc(dt: f32)
@@ -134,13 +134,10 @@ update_sim :: proc(dt: f32)
 	}
 
 	// particle - particle; interactions(naive)
-	for _ in 0 ..< 2 {
-		for &p1, i in sim.particles {
-			for p2, j in sim.particles {
-				if glsl.distance(p1.pos, p2.pos) < sim.radius * 2 && i != j {
-					// push p1 away from p2 constraint based
-					p1.velocity += repulse(p1.pos, p2.pos)
-				}
+	for &p1, i in sim.particles {
+		for p2, j in sim.particles {
+			if glsl.distance(p1.pos, p2.pos) < sim.field_radius * 2 && i != j {
+				p1.velocity += repulse(p1.pos, p2.pos)
 			}
 		}
 	}
@@ -155,13 +152,14 @@ update_sim :: proc(dt: f32)
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
-NUM_PARTICLES :: 3100
+NUM_PARTICLES :: 1500
 init_sim :: proc()
 {
 	rs := &gpu.rs
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = f32(width), f32(height)
 	sim.radius = 10
+	sim.field_radius = 50
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
