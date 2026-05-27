@@ -37,6 +37,7 @@ Point :: struct {
 
 Simulation :: struct {
 	width, height:           f32,
+	radius:                  f32,
 	vertices:                [dynamic]Vertex, //(change to instances later)
 	indices:                 [dynamic]u32,
 	gpu_constants:           GPU_Draw_Push_Constants,
@@ -95,11 +96,17 @@ main :: proc()
 	cleanup()
 }
 
+
+repulse :: proc(p1, p2: [2]f32) -> [2]f32
+{
+	// repulse p1 away from p2 with velocity proportional to how close the points are
+	return glsl.normalize(p1 - p2) * (2 * sim.radius - glsl.distance(p1, p2))
+}
+
 update_sim :: proc(dt: f32)
 {
 	free_all(context.temp_allocator)
-
-
+	// Natural forces!
 	for &particle in sim.particles {
 		// Add acceleration from gravity
 		particle.velocity += {0, 100} * dt
@@ -126,22 +133,35 @@ update_sim :: proc(dt: f32)
 		}
 	}
 
+	// particle - particle; interactions(naive)
+	for _ in 0 ..< 2 {
+		for &p1, i in sim.particles {
+			for p2, j in sim.particles {
+				if glsl.distance(p1.pos, p2.pos) < sim.radius * 2 && i != j {
+					// push p1 away from p2 constraint based
+					p1.velocity += repulse(p1.pos, p2.pos)
+				}
+			}
+		}
+	}
+
 
 	clear(&sim.vertices)
 	clear(&sim.indices)
 	for particle in sim.particles {
-		draw_circle(&sim.vertices, &sim.indices, particle.pos, 50, {1, 1, 1})
+		draw_circle(&sim.vertices, &sim.indices, particle.pos, sim.radius, {1, 1, 1})
 	}
 	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
-NUM_PARTICLES :: 31
+NUM_PARTICLES :: 310
 init_sim :: proc()
 {
 	rs := &gpu.rs
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = f32(width), f32(height)
+	sim.radius = 20
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
