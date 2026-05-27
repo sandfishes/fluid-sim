@@ -7,6 +7,7 @@ import geom "geometry"
 import "../gpu"
 
 import "core:fmt"
+import "core:math"
 import glsl "core:math/linalg/glsl"
 import "core:os"
 import "core:time"
@@ -30,12 +31,12 @@ Vertex :: struct {
 }
 
 Point :: struct {
-	pos:          [2]f32,
-	velocity:     [2]f32,
-	acceleration: [2]f32,
+	pos:      [2]f32,
+	velocity: [2]f32,
 }
 
 Simulation :: struct {
+	width, height:           f32,
 	vertices:                [dynamic]Vertex, //(change to instances later)
 	indices:                 [dynamic]u32,
 	gpu_constants:           GPU_Draw_Push_Constants,
@@ -59,12 +60,15 @@ main :: proc()
 	// Create index buffer
 
 	init_sim()
+	last_frame_time := glfw.GetTime()
 	for !glfw.WindowShouldClose(rs.window) {
+		current_frame_time := glfw.GetTime()
+		dt: f32 = f32(current_frame_time - last_frame_time)
+		last_frame_time = current_frame_time
 		glfw.PollEvents()
-
 		cmd: vk.CommandBuffer = vk_frame_setup()
 
-		update_sim()
+		update_sim(dt)
 
 		vk.CmdPushConstants(
 			cmd,
@@ -91,9 +95,38 @@ main :: proc()
 	cleanup()
 }
 
-update_sim :: proc()
+update_sim :: proc(dt: f32)
 {
 	free_all(context.temp_allocator)
+
+
+	for &particle in sim.particles {
+		// Add acceleration from gravity
+		particle.velocity += {0, 100} * dt
+		dist := min(1000, glsl.distance(particle.velocity, [2]f32{0, 0}))
+		particle.velocity -= glsl.normalize(particle.velocity) * dist * dist / 10000
+		particle.pos += particle.velocity * dt
+		// collide with ground / walls
+		// TODO make this reference space agonstic so the walls can rotate
+		if particle.pos.y < 0 {
+			particle.velocity.y *= -1 // Same velocity but going up
+			particle.pos.y = 0
+		} else if particle.pos.y > sim.height {
+			// hard code so that particle moves in the correct direction or else get instability
+			particle.velocity.y *= -1
+			particle.pos.y = sim.height
+		}
+		if particle.pos.x < 0 {
+			particle.velocity.x *= -1 // Same velocity but going up
+			particle.pos.x = 0
+		} else if particle.pos.x > sim.width {
+			// hard code so that particle moves in the correct direction or else get instabilitx
+			particle.velocity.x *= -1
+			particle.pos.x = sim.width
+		}
+	}
+
+
 	clear(&sim.vertices)
 	clear(&sim.indices)
 	for particle in sim.particles {
@@ -108,13 +141,17 @@ init_sim :: proc()
 {
 	rs := &gpu.rs
 	width, height := glfw.GetFramebufferSize(rs.window)
+	sim.width, sim.height = f32(width), f32(height)
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
 	for particle in 0 ..< NUM_PARTICLES {
 		append(
 			&sim.particles,
-			Point{{rand.float32() * f32(width), rand.float32() * f32(height)}, {0, 0}, {0, 0}},
+			Point {
+				{rand.float32() * f32(width), rand.float32() * f32(height)},
+				{(2 * rand.float32() - 1) * 500, (2 * rand.float32() - 1) * 500},
+			},
 		)
 		// Preload the data so buffers are the correct size.
 		draw_circle(&sim.vertices, &sim.indices, {0, 0}, 0.025, {1, 1, 1})
