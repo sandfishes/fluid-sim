@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:math"
 import glsl "core:math/linalg/glsl"
 import "core:os"
+import "core:thread"
 import "core:time"
 import "vendor:glfw"
 import vk "vendor:vulkan"
@@ -30,14 +31,16 @@ Vertex :: struct {
 }
 
 Point :: struct {
-	pos:      [2]f32,
-	velocity: [2]f32,
+	pos:     [2]f32,
+	vel:     [2]f32,
+	density: f32,
 }
 
 Simulation :: struct {
 	width, height:           f32,
 	radius:                  f32,
 	field_radius:            f32,
+	top_speed:               f32,
 	vertices:                [dynamic]Vertex, //(change to instances later)
 	indices:                 [dynamic]u32,
 	gpu_constants:           GPU_Draw_Push_Constants,
@@ -45,6 +48,9 @@ Simulation :: struct {
 
 	// Hot reloading info
 	current_last_write_time: time.Time,
+
+	// resources
+	thread_pool:             thread.Pool,
 
 	// Fluid particles
 	particles:               #soa[dynamic]Point,
@@ -70,6 +76,7 @@ main :: proc()
 		cmd: vk.CommandBuffer = vk_frame_setup()
 
 		update_sim(dt)
+		draw_sim()
 
 		vk.CmdPushConstants(
 			cmd,
@@ -97,59 +104,120 @@ main :: proc()
 }
 
 
-repulse :: proc(p1, p2: [2]f32) -> [2]f32
-{
-	// repulse p1 away from p2 with velocity proportional to how close the points are
-	// TODO need a better easing function for this. Linear is causing issues, it must be much stronger at the center
-	// return glsl.normalize(p1 - p2) * (2 * sim.field_radius - glsl.distance(p1, p2))
-	return glsl.normalize(p1 - p2) * (sim.field_radius / (glsl.distance(p1, p2) + 0.1))
+// Define some useful constants
+GRAVITY: f32 : 50
+DOWN: [2]f32 : {0, 1}
+RIGHT: [2]f32 : {1, 1}
+DAMPING_FACTOR: f32 : 0.8
+MASS: f32 : 1
 
-}
-
+// TODO claydo
 update_sim :: proc(dt: f32)
 {
 	free_all(context.temp_allocator)
 	// Natural forces!
 	for &particle in sim.particles {
-		// Add acceleration from gravity
-		particle.velocity += {0, 100} * dt
-		dist := min(1000, glsl.distance(particle.velocity, [2]f32{0, 0}))
-		particle.velocity -= glsl.normalize(particle.velocity) * dist * dist / 10000
-		particle.pos += particle.velocity * dt
-		// collide with ground / walls
-		// TODO make this reference space agonstic so the walls can rotate
-		if particle.pos.y < 0 {
-			particle.velocity.y *= -1 // Same velocity but going up
-			particle.pos.y = 0
-		} else if particle.pos.y > sim.height {
-			// hard code so that particle moves in the correct direction or else get instability
-			particle.velocity.y *= -1
-			particle.pos.y = sim.height
-		}
-		if particle.pos.x < 0 {
-			particle.velocity.x *= -1 // Same velocity but going up
-			particle.pos.x = 0
-		} else if particle.pos.x > sim.width {
-			// hard code so that particle moves in the correct direction or else get instabilitx
-			particle.velocity.x *= -1
-			particle.pos.x = sim.width
-		}
+		particle.vel += DOWN * GRAVITY * dt
+		particle.pos += particle.vel * dt
 	}
 
-	// particle - particle; interactions(naive)
-	for &p1, i in sim.particles {
-		for p2, j in sim.particles {
-			if glsl.distance(p1.pos, p2.pos) < sim.field_radius * 2 && i != j {
-				p1.velocity += repulse(p1.pos, p2.pos)
-			}
+	// Resolve collisions
+	for &p in sim.particles {
+		if abs(p.pos.x) > sim.width - sim.field_radius {
+			p.pos.x = math.sign(p.pos.x) * (sim.width - sim.field_radius)
+			p.vel.x *= -DAMPING_FACTOR
 		}
+
+		if abs(p.pos.y) > sim.height - sim.field_radius {
+			p.pos.y = math.sign(p.pos.y) * (sim.height - sim.field_radius)
+			p.vel.y *= -DAMPING_FACTOR
+		}
+		sim.top_speed = max(sim.top_speed, glsl.length(p.vel))
 	}
 
+	update_densities()
+}
 
+smooth_kern :: #force_inline proc(rad, dst: f32) -> f32
+{
+	volume := math.PI * math.pow(rad, 8) / 4 // Can make precalculate if needed
+	value := max(0, rad * rad - dst * dst)
+	return value * value * value / volume
+}
+
+smooth_kern_deriv :: #force_inline proc(rad, dst: f32) -> f32
+{
+	if (dst > rad) {return 0}
+	f: f32 = rad * rad - dst * dst
+	scale: f32 = -24 / (math.PI * math.pow(rad, 8))
+	return scale * dst * f * f
+}
+
+calculate_density :: proc(sample_point: [2]f32) -> f32
+{
+	density: f32 = 0
+	positions, _ := soa_unzip(sim.particles[:])
+	for p in positions {
+		dst := glsl.distance(p, sample_point)
+		influence := smooth_kern(sim.field_radius, dst)
+		density := MASS * influence
+	}
+	return density
+}
+
+// multithreading
+update_densities :: proc()
+{
+	positions, _, densities := soa_unzip(sim.particles[:])
+	for p, i in positions {
+		densities[i] = calculate_density(p)
+	}
+}
+
+/* To calculate some property at position x, we loop through every particle, and sum the property for that particle,
+multipled by mass, divided by density, multiplied by the smoothing function. */
+calculate_property :: proc(sample_point: [2]f32, properties: []f32) -> f32
+{
+	property: f32 = 0
+	positions: [][2]f32
+	positions, _, _ = soa_unzip(sim.particles[:])
+	for p, i in positions {
+		dst := glsl.distance(p, sample_point)
+		influence := smooth_kern(sim.field_radius, dst)
+		density: f32 = calculate_density(p)
+		property += properties[i] * influence * MASS / density
+	}
+	return property
+}
+
+calculate_property_gradient :: proc(sample_point: [2]f32, properties: []f32) -> [2]f32
+{
+	property_gradient: [2]f32 = {0, 0}
+	positions: [][2]f32
+	positions, _ = soa_unzip(sim.particles[:])
+	for p, i in positions {
+		dst: f32 = glsl.distance(p, sample_point)
+		dir: [2]f32 = (p - sample_point) / dst // WARNING dst is 0 if sampling itself?
+		slope: f32 = smooth_kern_deriv(sim.field_radius, dst)
+		density: f32 = calculate_density(p) // WARNING obviously should be pre-calculated
+		property_gradient -= properties[i] * dir * slope * MASS / density
+	}
+	return property_gradient
+}
+
+draw_sim :: proc()
+{
 	clear(&sim.vertices)
 	clear(&sim.indices)
 	for particle in sim.particles {
-		draw_circle(&sim.vertices, &sim.indices, particle.pos, sim.radius, {1, 1, 1})
+		scale_vel := clamp(glsl.length(particle.vel) / sim.top_speed, 0, 1)
+		draw_circle(
+			&sim.vertices,
+			&sim.indices,
+			particle.pos,
+			sim.radius,
+			{scale_vel, 1 - scale_vel, 0.3},
+		)
 	}
 	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
@@ -160,9 +228,13 @@ init_sim :: proc()
 {
 	rs := &gpu.rs
 	width, height := glfw.GetFramebufferSize(rs.window)
-	sim.width, sim.height = f32(width), f32(height)
+	sim.width, sim.height = 0.5 * f32(width), 0.5 * f32(height)
 	sim.radius = 10
 	sim.field_radius = 50
+	sim.top_speed = 0.1
+	core_count := os.get_processor_core_count()
+	thread.pool_init(&sim.thread_pool, context.allocator, core_count - 1) // Not allocating so default is fine
+	thread.pool_start(&pool)
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
@@ -170,8 +242,11 @@ init_sim :: proc()
 		append(
 			&sim.particles,
 			Point {
-				{rand.float32() * f32(width), rand.float32() * f32(height)},
-				{(2 * rand.float32() - 1) * 500, (2 * rand.float32() - 1) * 500},
+				{
+					-sim.width + 2 * rand.float32() * sim.width,
+					-sim.height + 2 * rand.float32() * sim.height,
+				},
+				{(2 * rand.float32() - 1) * 100, (2 * rand.float32() - 1) * 100},
 			},
 		)
 		// Preload the data so buffers are the correct size.
@@ -195,7 +270,14 @@ init_sim :: proc()
 	mesh.vertex_buffer_address = vk.GetBufferDeviceAddress(rs.device, &vertex_buffer_address_info)
 
 	sim.gpu_constants = GPU_Draw_Push_Constants {
-		world_matrix  = glsl.mat4Ortho3d(0, f32(width), 0, f32(height), -100, 100),
+		world_matrix  = glsl.mat4Ortho3d(
+			-f32(width) / 2,
+			f32(width) / 2,
+			-f32(height) / 2,
+			f32(height) / 2,
+			-100,
+			100,
+		),
 		vertex_buffer = mesh.vertex_buffer_address,
 	}
 }
