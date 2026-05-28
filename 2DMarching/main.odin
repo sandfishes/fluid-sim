@@ -5,6 +5,7 @@ import geom "geometry"
 
 import "../gpu"
 
+import "base:runtime"
 import "core:fmt"
 import "core:math"
 import glsl "core:math/linalg/glsl"
@@ -51,6 +52,7 @@ Simulation :: struct {
 
 	// resources
 	thread_pool:             thread.Pool,
+	core_count:              int,
 
 	// Fluid particles
 	particles:               #soa[dynamic]Point,
@@ -156,7 +158,7 @@ smooth_kern_deriv :: #force_inline proc(rad, dst: f32) -> f32
 calculate_density :: proc(sample_point: [2]f32) -> f32
 {
 	density: f32 = 0
-	positions, _ := soa_unzip(sim.particles[:])
+	positions, _, _ := soa_unzip(sim.particles[:])
 	for p in positions {
 		dst := glsl.distance(p, sample_point)
 		influence := smooth_kern(sim.field_radius, dst)
@@ -165,15 +167,54 @@ calculate_density :: proc(sample_point: [2]f32) -> f32
 	return density
 }
 
-// multithreading
+Task_Data :: struct {
+	positions: [][2]f32,
+	densities: []f32,
+}
 update_densities :: proc()
 {
+	// This could be abstracted per position, but then you lose some cache locality which is not worth it.
 	positions, _, densities := soa_unzip(sim.particles[:])
-	for p, i in positions {
-		densities[i] = calculate_density(p)
+	chunk_size := len(positions) / sim.core_count
+	submit :: proc(id: int, task_data: ^Task_Data)
+	{
+
+		thread.pool_add_task(
+			&sim.thread_pool,
+			runtime.nil_allocator(),
+			update_sub_densities,
+			task_data,
+			id,
+		)
 	}
+
+	i := 0
+	task_datas: [50]Task_Data // If you have more than 50 cores, my apologies...
+	for i < sim.core_count - 1 {
+		task_datas[i] = Task_Data {
+			positions = positions[i * chunk_size:][:chunk_size],
+			densities = densities[i * chunk_size:][:chunk_size],
+		}
+		i += 1
+	}
+	task_datas[i] = Task_Data {
+		positions = positions[i * chunk_size:],
+		densities = densities[i * chunk_size:],
+	}
+	for i in 0 ..= i {
+		submit(i, &task_datas[i])
+	}
+
+	thread.pool_finish(&sim.thread_pool)
 }
 
+update_sub_densities :: proc(task_data: thread.Task)
+{
+	data := cast(^Task_Data)task_data.data
+	for p, i in data.positions {
+		data.densities[i] = calculate_density(p)
+	}
+}
 /* To calculate some property at position x, we loop through every particle, and sum the property for that particle,
 multipled by mass, divided by density, multiplied by the smoothing function. */
 calculate_property :: proc(sample_point: [2]f32, properties: []f32) -> f32
@@ -194,7 +235,7 @@ calculate_property_gradient :: proc(sample_point: [2]f32, properties: []f32) -> 
 {
 	property_gradient: [2]f32 = {0, 0}
 	positions: [][2]f32
-	positions, _ = soa_unzip(sim.particles[:])
+	positions, _, _ = soa_unzip(sim.particles[:])
 	for p, i in positions {
 		dst: f32 = glsl.distance(p, sample_point)
 		dir: [2]f32 = (p - sample_point) / dst // WARNING dst is 0 if sampling itself?
@@ -232,9 +273,9 @@ init_sim :: proc()
 	sim.radius = 10
 	sim.field_radius = 50
 	sim.top_speed = 0.1
-	core_count := os.get_processor_core_count()
-	thread.pool_init(&sim.thread_pool, context.allocator, core_count - 1) // Not allocating so default is fine
-	thread.pool_start(&pool)
+	sim.core_count = os.get_processor_core_count()
+	thread.pool_init(&sim.thread_pool, context.allocator, sim.core_count - 1) // Not allocating so default is fine
+	thread.pool_start(&sim.thread_pool)
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
@@ -247,6 +288,7 @@ init_sim :: proc()
 					-sim.height + 2 * rand.float32() * sim.height,
 				},
 				{(2 * rand.float32() - 1) * 100, (2 * rand.float32() - 1) * 100},
+				0,
 			},
 		)
 		// Preload the data so buffers are the correct size.
