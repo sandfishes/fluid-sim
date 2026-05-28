@@ -100,7 +100,10 @@ main :: proc()
 repulse :: proc(p1, p2: [2]f32) -> [2]f32
 {
 	// repulse p1 away from p2 with velocity proportional to how close the points are
-	return glsl.normalize(p1 - p2) * (2 * sim.field_radius - glsl.distance(p1, p2))
+	// TODO need a better easing function for this. Linear is causing issues, it must be much stronger at the center
+	// return glsl.normalize(p1 - p2) * (2 * sim.field_radius - glsl.distance(p1, p2))
+	return glsl.normalize(p1 - p2) * (sim.field_radius / (glsl.distance(p1, p2) + 0.1))
+
 }
 
 update_sim :: proc(dt: f32)
