@@ -216,15 +216,9 @@ REQUIRED_BUFFER_ADDRESS_FEATURES := vk.PhysicalDeviceBufferDeviceAddressFeatures
 }
 
 // Set required extensions to support.
-DEVICE_EXTENSIONS := []cstring {
-	vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
-	vk.KHR_SWAPCHAIN_EXTENSION_NAME,
-	vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME, // Enabled by default in 1.3
-	vk.KHR_COPY_COMMANDS_2_EXTENSION_NAME, // Enabled by default in 1.3
-	vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME, // Enabled by default in 1.3
-	vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, // Enabled by default in 1.3
-	vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
-}
+DEVICE_EXTENSIONS: []cstring
+
+
 // Set validation layers to enable.
 VALIDATION_LAYERS := []cstring{"VK_LAYER_KHRONOS_validation"}
 
@@ -655,6 +649,26 @@ transition_image :: proc(
 /* Initialize the global renderer state for Vulkan. */
 init_vulkan :: proc()
 {
+	when ODIN_OS == .Darwin {
+		DEVICE_EXTENSIONS = []cstring {
+			vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
+			vk.KHR_SWAPCHAIN_EXTENSION_NAME,
+			vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_COPY_COMMANDS_2_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+		}
+	} else {
+		DEVICE_EXTENSIONS = []cstring {
+			vk.KHR_SWAPCHAIN_EXTENSION_NAME,
+			vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_COPY_COMMANDS_2_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, // Enabled by default in 1.3
+			vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+		}
+	}
 	// set up slang global session
 	assert(sl.createGlobalSession(sl.API_VERSION, &rs.slang_global_session) == sl.OK)
 

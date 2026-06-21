@@ -329,3 +329,4 @@ init_sim :: proc()
 		vertex_buffer = mesh.vertex_buffer_address,
 	}
 }
+

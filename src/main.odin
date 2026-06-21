@@ -1,5 +1,8 @@
 package marching2d
 
+// NOTE
+// On linux you MUST add the src/gpu/slang/lib folder to LD_LIBRARY_PATH or else
+// slang will not be able to compile the shaders.
 import "core:math/rand"
 import geom "geometry"
 
@@ -276,3 +279,4 @@ cleanup :: proc()
 	gpu.vulkan_shutdown()
 
 }
+
