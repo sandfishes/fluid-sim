@@ -15,13 +15,13 @@ import vk "vendor:vulkan"
 GRAVITY: f32 : 0
 DOWN: [2]f32 : {0, 1}
 RIGHT: [2]f32 : {1, 1}
-DAMPING_FACTOR: f32 : 0.9
+DAMPING_FACTOR: f32 : 0.95
 MASS: f32 : 1
 TARGET_DENSITY: f32 : 1
 PRESSURE_MULTIPLER: f32 : 20
 INIT_SPEED_SCALE: f32 : 0
 FIELD_RADIUS: f32 : 50
-NUM_PARTICLES :: 3000
+NUM_PARTICLES :: 1000
 
 Simulation :: struct {
 	width, height:           f32,
@@ -324,13 +324,15 @@ init_sim :: proc()
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
-	for particle in 0 ..< NUM_PARTICLES {
+	for _ in 0 ..< NUM_PARTICLES {
 		append(
 			&sim.particles,
 			Point {
 				{
-					-sim.width + 2 * rand.float32() * sim.width,
-					-sim.height + 2 * rand.float32() * sim.height,
+					// -sim.width + 2 * rand.float32() * sim.width,
+					// -sim.height + 2 * rand.float32() * sim.height,
+					rand.float32() * sim.width / 10,
+					rand.float32() * sim.height / 10,
 				},
 				{
 					(2 * rand.float32() - 1) * INIT_SPEED_SCALE,
