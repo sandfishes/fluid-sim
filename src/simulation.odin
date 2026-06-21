@@ -1,14 +1,16 @@
 package marching2d
-import "../gpu"
 import "base:runtime"
 import "core:compress"
+import "core:container/small_array"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg/glsl"
 import "core:math/rand"
 import "core:os"
+import "core:sort"
 import "core:thread"
 import "core:time"
+import "gpu"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 // Define some useful constants
@@ -18,9 +20,10 @@ RIGHT: [2]f32 : {1, 1}
 DAMPING_FACTOR: f32 : 0.9
 MASS: f32 : 1
 TARGET_DENSITY: f32 : 1
-PRESSURE_MULTIPLER: f32 : 100
+PRESSURE_MULTIPLER: f32 : 20
 INIT_SPEED_SCALE: f32 : 0
 FIELD_RADIUS: f32 : 50
+NUM_PARTICLES :: 1000
 
 Simulation :: struct {
 	width, height:           f32,
@@ -41,6 +44,8 @@ Simulation :: struct {
 
 	// Fluid particles
 	particles:               #soa[dynamic]Point,
+	spatial_lookup:          [NUM_PARTICLES]Spatial_Entry,
+	start_indices:           [NUM_PARTICLES]int,
 }
 
 sim: Simulation
@@ -57,11 +62,6 @@ update_sim :: proc(dt: f32)
 	thread_data := Delta_Time{dt}
 	do_all(calculate_densities, thread_data, 0, len(positions), &sim.thread_pool)
 	do_all(apply_pressure_forces, thread_data, 0, len(positions), &sim.thread_pool)
-	// for &p, i in sim.particles {
-	// 	pressure_force: [2]f32 = calculate_pressure_force(i)
-	// 	pressure_acceleration: [2]f32 = pressure_force / p.density
-	// 	p.vel = pressure_acceleration * dt
-	// }
 	// Apply natural forces
 	do_all(apply_natural_forces, thread_data, 0, len(positions), &sim.thread_pool)
 }
@@ -69,6 +69,7 @@ update_sim :: proc(dt: f32)
 Delta_Time :: struct {
 	dt: f32,
 }
+
 calculate_densities :: proc(thread_data: thread.Task)
 {
 	data := get_task_data(Delta_Time, thread_data)
@@ -83,7 +84,7 @@ apply_pressure_forces :: proc(thread_data: thread.Task)
 	for &p, i in sim.particles[data.start:data.end] {
 		pressure_force: [2]f32 = calculate_pressure_force(data.start + i)
 		pressure_acceleration: [2]f32 = pressure_force / p.density
-		p.vel = pressure_acceleration * data.dt
+		p.vel += pressure_acceleration * data.dt
 		// TODO should be p.vel -=
 	}
 }
@@ -107,6 +108,84 @@ apply_natural_forces :: proc(thread_data: thread.Task)
 			p.vel.y *= -DAMPING_FACTOR
 		}
 		sim.top_speed = max(sim.top_speed, glsl.length(p.vel))
+	}
+}
+
+Spatial_Entry :: struct {
+	idx:      int,
+	cell_key: int,
+}
+
+spatial_Lookup_Data :: struct {
+	radius: f32,
+}
+
+Update_Start_Key_Data :: struct {}
+
+update_spatial_lookup :: proc(points: [][2]f32, radius: f32)
+{
+
+	do_all(
+		update_spatial_point,
+		spatial_Lookup_Data{sim.radius},
+		0,
+		len(sim.particles),
+		&sim.thread_pool,
+	)
+
+	sort.quick_sort_proc(sim.spatial_lookup[:], key_predicate)
+
+	// calculate start key of each unique cell
+	do_all(update_start_key, Update_Start_Key_Data{}, 0, len(sim.particles), &sim.thread_pool)
+}
+
+key_predicate :: proc(entry_1: Spatial_Entry, entry_2: Spatial_Entry) -> int
+{
+	return entry_1.cell_key - entry_2.cell_key
+}
+
+update_spatial_point :: proc(thread_data: thread.Task)
+{
+	data := get_task_data(spatial_Lookup_Data, thread_data)
+	radius := data.data.radius
+	points, _, _ := soa_unzip(sim.particles[:])
+	for &point, idx in points[data.start:data.end] {
+		cell_x, cell_y := position_to_cell_coord(point, radius)
+		cell_key := key_from_hash(hash_cell(cell_x, cell_y))
+		sim.spatial_lookup[idx] = Spatial_Entry{idx, cell_key}
+		sim.start_indices[idx] = 999999999 // TODO replace with int max value
+	}
+}
+
+position_to_cell_coord :: #force_inline proc(point: [2]f32, radius: f32) -> (int, int)
+{
+	cell_x: int = int(point.x / radius)
+	cell_y: int = int(point.y / radius)
+	return cell_x, cell_y
+}
+
+hash_cell :: #force_inline proc(cell_x, cell_y: int) -> u32
+{
+	a := u32(cell_x) * 15823
+	b := u32(cell_y) * 9737333
+	return a + b
+}
+
+key_from_hash :: proc(hash: u32) -> int
+{
+	return cast(int)hash % len(sim.spatial_lookup)
+}
+
+update_start_key :: proc(thread_data: thread.Task)
+{
+	data := get_task_data(Update_Start_Key_Data, thread_data)
+	points, _, _ := soa_unzip(sim.particles[:])
+	for point, i in points[data.start:data.end] {
+		key := sim.spatial_lookup[i].cell_key
+		key_prev := i == 0 ? 999999 : sim.spatial_lookup[i - 1].cell_key
+		if (key != key_prev) {
+			sim.start_indices[key] = i
+		}
 	}
 }
 
@@ -158,11 +237,18 @@ calculate_pressure_force :: proc(idx: int) -> [2]f32
 		dir: [2]f32 = (p - sample_point) / dst
 		slope: f32 = smooth_kern_deriv(sim.field_radius, dst)
 		density: f32 = densities[i]
-		pressure_force -= convert_density_to_pressure(density) * dir * slope * MASS / density
+		shared_pressure := calculate_shared_pressure(density, densities[i])
+		pressure_force -= shared_pressure * dir * slope * MASS / density
 	}
 	return pressure_force
 }
 
+calculate_shared_pressure :: proc(density_1: f32, density_2: f32) -> f32
+{
+	pressure_1 := convert_density_to_pressure(density_1)
+	pressure_2 := convert_density_to_pressure(density_2)
+	return (pressure_1 + pressure_2) / 2
+}
 
 draw_sim :: proc()
 {
@@ -182,7 +268,6 @@ draw_sim :: proc()
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
 }
 
-NUM_PARTICLES :: 500
 init_sim :: proc()
 {
 	rs := &gpu.rs
@@ -244,4 +329,3 @@ init_sim :: proc()
 		vertex_buffer = mesh.vertex_buffer_address,
 	}
 }
-

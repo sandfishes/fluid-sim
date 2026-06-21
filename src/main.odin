@@ -3,7 +3,7 @@ package marching2d
 import "core:math/rand"
 import geom "geometry"
 
-import "../gpu"
+import "gpu"
 
 import "base:runtime"
 import "core:fmt"
@@ -94,7 +94,7 @@ vk_setup :: proc()
 
 	// Load shaders
 	module: vk.ShaderModule = gpu.compile_shader_module(
-		"triangle.slang",
+		"shaders/triangle.slang",
 		"vertexmain",
 		"fragmentmain",
 	)
@@ -276,4 +276,3 @@ cleanup :: proc()
 	gpu.vulkan_shutdown()
 
 }
-

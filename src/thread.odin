@@ -14,7 +14,7 @@ do_all :: proc(do_proc: proc(_: thread.Task), data: $T, start, end: int, pool: ^
 	chunk_size := (end - start) / thread_count
 	task_datas: [25]Task_Data(T)
 	i: int = 0
-	for i < thread_count - 1 { 	// TODO Last chunk doesn't fit so it fails
+	for i < thread_count - 1 {
 		task_datas[i] = Task_Data(T) {
 			data  = data,
 			start = start + i * chunk_size,
@@ -23,6 +23,7 @@ do_all :: proc(do_proc: proc(_: thread.Task), data: $T, start, end: int, pool: ^
 		thread.pool_add_task(pool, runtime.nil_allocator(), do_proc, &task_datas[i], i)
 		i += 1
 	}
+	// Last chunk
 	task_datas[i] = Task_Data(T) {
 		data  = data,
 		start = start + i * chunk_size,
