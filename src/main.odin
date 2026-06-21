@@ -97,7 +97,7 @@ vk_setup :: proc()
 
 	// Load shaders
 	module: vk.ShaderModule = gpu.compile_shader_module(
-		"shaders/triangle.slang",
+		"src/shaders/triangle.slang",
 		"vertexmain",
 		"fragmentmain",
 	)
@@ -279,4 +279,3 @@ cleanup :: proc()
 	gpu.vulkan_shutdown()
 
 }
-

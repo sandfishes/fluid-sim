@@ -1,7 +1,5 @@
 package marching2d
 import "base:runtime"
-import "core:compress"
-import "core:container/small_array"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg/glsl"
@@ -23,7 +21,7 @@ TARGET_DENSITY: f32 : 1
 PRESSURE_MULTIPLER: f32 : 20
 INIT_SPEED_SCALE: f32 : 0
 FIELD_RADIUS: f32 : 50
-NUM_PARTICLES :: 1000
+NUM_PARTICLES :: 3000
 
 Simulation :: struct {
 	width, height:           f32,
@@ -54,8 +52,7 @@ sim: Simulation
 update_sim :: proc(dt: f32)
 {
 	free_all(context.temp_allocator)
-
-
+	update_spatial_lookup()
 	positions, velocity, densities := soa_unzip(sim.particles[:])
 
 	// Calculate densities. Accesses global state (like a lot)
@@ -85,7 +82,6 @@ apply_pressure_forces :: proc(thread_data: thread.Task)
 		pressure_force: [2]f32 = calculate_pressure_force(data.start + i)
 		pressure_acceleration: [2]f32 = pressure_force / p.density
 		p.vel += pressure_acceleration * data.dt
-		// TODO should be p.vel -=
 	}
 }
 
@@ -116,18 +112,18 @@ Spatial_Entry :: struct {
 	cell_key: int,
 }
 
-spatial_Lookup_Data :: struct {
+Spatial_Lookup_Data :: struct {
 	radius: f32,
 }
 
 Update_Start_Key_Data :: struct {}
 
-update_spatial_lookup :: proc(points: [][2]f32, radius: f32)
+update_spatial_lookup :: proc()
 {
 
 	do_all(
 		update_spatial_point,
-		spatial_Lookup_Data{sim.radius},
+		Spatial_Lookup_Data{sim.field_radius},
 		0,
 		len(sim.particles),
 		&sim.thread_pool,
@@ -146,14 +142,15 @@ key_predicate :: proc(entry_1: Spatial_Entry, entry_2: Spatial_Entry) -> int
 
 update_spatial_point :: proc(thread_data: thread.Task)
 {
-	data := get_task_data(spatial_Lookup_Data, thread_data)
+	data := get_task_data(Spatial_Lookup_Data, thread_data)
 	radius := data.data.radius
 	points, _, _ := soa_unzip(sim.particles[:])
-	for &point, idx in points[data.start:data.end] {
+	for &point, i in points[data.start:data.end] {
+		idx := i + data.start
 		cell_x, cell_y := position_to_cell_coord(point, radius)
 		cell_key := key_from_hash(hash_cell(cell_x, cell_y))
 		sim.spatial_lookup[idx] = Spatial_Entry{idx, cell_key}
-		sim.start_indices[idx] = 999999999 // TODO replace with int max value
+		sim.start_indices[idx] = -1
 	}
 }
 
@@ -181,11 +178,55 @@ update_start_key :: proc(thread_data: thread.Task)
 	data := get_task_data(Update_Start_Key_Data, thread_data)
 	points, _, _ := soa_unzip(sim.particles[:])
 	for point, i in points[data.start:data.end] {
-		key := sim.spatial_lookup[i].cell_key
-		key_prev := i == 0 ? 999999 : sim.spatial_lookup[i - 1].cell_key
+		idx := i + data.start
+		key := sim.spatial_lookup[idx].cell_key
+		key_prev := idx == 0 ? -1 : sim.spatial_lookup[idx - 1].cell_key
 		if (key != key_prev) {
-			sim.start_indices[key] = i
+			sim.start_indices[key] = idx
 		}
+	}
+}
+
+IDX_BUFFER_SIZE :: 500
+@(thread_local)
+thread_idx_buffer: [IDX_BUFFER_SIZE]int
+get_points_within_radius :: proc(sample_point: [2]f32, buffer: ^[IDX_BUFFER_SIZE]int) -> int
+{
+	n := 0
+	spatial_lookup := sim.spatial_lookup
+	start_indices := sim.start_indices
+	points, _, _ := soa_unzip(sim.particles[:])
+	centre_x, centre_y := position_to_cell_coord(sample_point, sim.field_radius)
+	cell_offsets: [9][2]int = get_cell_offsets(centre_x, centre_y)
+	for pair in cell_offsets {
+		key := key_from_hash(hash_cell(pair.x, pair.y))
+		cell_start_idx := sim.start_indices[key]
+		if cell_start_idx == -1 {continue} 	// no points in the square
+		for i := cell_start_idx; i < len(sim.spatial_lookup); i += 1 {
+			if sim.spatial_lookup[i].cell_key != key {break}
+			particle_index := sim.spatial_lookup[i].idx
+			buffer[n] = particle_index
+			n += 1
+			if n >= IDX_BUFFER_SIZE { 	// safety
+				return n
+			}
+		}
+	}
+	return n
+}
+
+get_cell_offsets :: proc(x, y: int) -> [9][2]int
+{
+	return [9][2]int {
+		{x, y},
+		{x + 1, y},
+		{x - 1, y},
+		{x, y - 1},
+		{x + 1, y - 1},
+		{x - 1, y - 1},
+		{x, y + 1},
+		{x + 1, y + 1},
+		{x - 1, y + 1},
 	}
 }
 
@@ -213,31 +254,32 @@ smooth_kern_deriv :: #force_inline proc(rad, dst: f32) -> f32
 calculate_density :: proc(sample_point: [2]f32, idx: int) -> f32
 {
 	density: f32 = 0
-	positions, _, _ := soa_unzip(sim.particles[:])
-	for p, i in positions {
-		// if i == idx {continue}
-		dst := glsl.distance(p, sample_point)
+	points, _, _ := soa_unzip(sim.particles[:])
+	n := get_points_within_radius(sample_point, &thread_idx_buffer)
+	for i in 0 ..< n {
+		point := points[thread_idx_buffer[i]]
+		dst := glsl.distance(point, sample_point)
 		influence := smooth_kern(sim.field_radius, dst)
 		density += MASS * influence
 	}
 	return density
 }
 
-calculate_pressure_force :: proc(idx: int) -> [2]f32
+calculate_pressure_force :: proc(sample_idx: int) -> [2]f32
 {
 	pressure_force: [2]f32 = {0, 0}
-	positions: [][2]f32
-	densities: []f32
-	positions, _, densities = soa_unzip(sim.particles[:])
-	sample_point := positions[idx]
-	for p, i in positions {
-		if i == idx {continue}
-		dst: f32 = glsl.distance(p, sample_point)
-		dst = max(0.0001, dst)
-		dir: [2]f32 = (p - sample_point) / dst
+	points, _, densities := soa_unzip(sim.particles[:])
+	sample_point := points[sample_idx]
+	n := get_points_within_radius(sample_point, &thread_idx_buffer)
+	for i in 0 ..< n {
+		idx := thread_idx_buffer[i]
+		point := points[idx]
+		dst: f32 = glsl.distance(point, sample_point)
+		if dst < 0.0001 {continue}
+		dir: [2]f32 = (point - sample_point) / dst
 		slope: f32 = smooth_kern_deriv(sim.field_radius, dst)
-		density: f32 = densities[i]
-		shared_pressure := calculate_shared_pressure(density, densities[i])
+		density := densities[idx]
+		shared_pressure := calculate_shared_pressure(densities[sample_idx], density)
 		pressure_force -= shared_pressure * dir * slope * MASS / density
 	}
 	return pressure_force
@@ -273,7 +315,7 @@ init_sim :: proc()
 	rs := &gpu.rs
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = 0.5 * f32(width), 0.5 * f32(height)
-	sim.radius = 10
+	sim.radius = 5
 	sim.field_radius = FIELD_RADIUS
 	sim.top_speed = 0.1
 	sim.core_count = os.get_processor_core_count()

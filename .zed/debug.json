@@ -5,9 +5,12 @@
     "request": "launch",
     "program": "debug",
     "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "LD_LIBRARY_PATH": "$LD_LIBRARY_PATH:$ZED_WORKTREE_ROOT/src/gpu/slang/lib",
+    },
     "build": {
       "command": "odin",
-      "args": ["build", "./2DMarching", "-debug", "-out:debug"],
+      "args": ["build", "src", "-debug", "-out:debug"],
     },
   },
 ]
