@@ -21,7 +21,7 @@ TARGET_DENSITY: f32 : 1
 PRESSURE_MULTIPLER: f32 : 20
 INIT_SPEED_SCALE: f32 : 0
 FIELD_RADIUS: f32 : 50
-NUM_PARTICLES :: 1000
+NUM_PARTICLES :: 500
 
 Simulation :: struct {
 	width, height:           f32,
@@ -44,6 +44,9 @@ Simulation :: struct {
 	particles:               #soa[dynamic]Point,
 	spatial_lookup:          [NUM_PARTICLES]Spatial_Entry,
 	start_indices:           [NUM_PARTICLES]int,
+
+	// Input
+	cursor_pos:              [2]f32,
 }
 
 sim: Simulation
@@ -52,15 +55,25 @@ sim: Simulation
 update_sim :: proc(dt: f32)
 {
 	free_all(context.temp_allocator)
-	update_spatial_lookup()
 	positions, velocity, densities := soa_unzip(sim.particles[:])
+	sim.top_speed = 0
 
-	// Calculate densities. Accesses global state (like a lot)
 	thread_data := Delta_Time{dt}
+	// Apply natural forces and predict position
+	do_all(apply_natural_forces, thread_data, 0, len(positions), &sim.thread_pool)
+
+	update_spatial_lookup()
+	// Calculate densities. Accesses global state (like a lot)
 	do_all(calculate_densities, thread_data, 0, len(positions), &sim.thread_pool)
 	do_all(apply_pressure_forces, thread_data, 0, len(positions), &sim.thread_pool)
-	// Apply natural forces
-	do_all(apply_natural_forces, thread_data, 0, len(positions), &sim.thread_pool)
+
+	// update positions
+	do_all(update_positions, thread_data, 0, len(positions), &sim.thread_pool)
+}
+
+cursor_pos_callback :: proc "c" (window: glfw.WindowHandle, x, y: f64)
+{
+	sim.cursor_pos = [2]f32{f32(x), f32(y)}
 }
 
 Delta_Time :: struct {
@@ -85,14 +98,19 @@ apply_pressure_forces :: proc(thread_data: thread.Task)
 	}
 }
 
-Natural_Force_Data :: struct {
-	dt: f32,
-}
 apply_natural_forces :: proc(thread_data: thread.Task)
 {
 	data := get_task_data(Delta_Time, thread_data)
 	for &p in sim.particles[data.start:data.end] {
 		p.vel += DOWN * GRAVITY * data.dt
+		p.pos += p.vel * data.dt
+	}
+}
+
+update_positions :: proc(thread_data: thread.Task)
+{
+	data := get_task_data(Delta_Time, thread_data)
+	for &p in sim.particles[data.start:data.end] {
 		p.pos += p.vel * data.dt
 		if abs(p.pos.x) > sim.width - sim.field_radius {
 			p.pos.x = math.sign(p.pos.x) * (sim.width - sim.field_radius)
@@ -297,13 +315,20 @@ draw_sim :: proc()
 	clear(&sim.vertices)
 	clear(&sim.indices)
 	for particle in sim.particles {
+		cell_x, cell_y := position_to_cell_coord(particle.pos.x, particle.pos.y)
+		cell_key := key_from_hash(hash_cell(cell_x, cell_y))
+		red := f32(cell_key) / f32(len(sim.particles))
+		fmt.println(cell_key)
+		blue := 1 - red
+		green: f32 = 0.5
 		scale_vel := clamp(glsl.length(particle.vel) / sim.top_speed, 0, 1)
 		draw_circle(
 			&sim.vertices,
 			&sim.indices,
 			particle.pos,
 			sim.radius,
-			{scale_vel, 1 - scale_vel, 0.3},
+			{red, green, blue},
+			// {scale_vel, 1 - scale_vel, 0.3},
 		)
 	}
 	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
@@ -313,6 +338,7 @@ draw_sim :: proc()
 init_sim :: proc()
 {
 	rs := &gpu.rs
+	glfw.SetCursorPosCallback(rs.window, cursor_pos_callback)
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = 0.5 * f32(width), 0.5 * f32(height)
 	sim.radius = 5

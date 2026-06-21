@@ -86,3 +86,4 @@ mut_map_slice :: proc(
 
 	thread.pool_finish(pool)
 }
+
