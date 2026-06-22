@@ -15,13 +15,13 @@ import vk "vendor:vulkan"
 GRAVITY: f32 : 0
 DOWN: [2]f32 : {0, 1}
 RIGHT: [2]f32 : {1, 1}
-DAMPING_FACTOR: f32 : 0.95
+DAMPING_FACTOR: f32 : 0.90
 MASS: f32 : 1
 TARGET_DENSITY: f32 : 1
 PRESSURE_MULTIPLER: f32 : 20
 INIT_SPEED_SCALE: f32 : 0
 FIELD_RADIUS: f32 : 50
-NUM_PARTICLES :: 500
+NUM_PARTICLES :: 1000
 
 Simulation :: struct {
 	width, height:           f32,
@@ -73,7 +73,9 @@ update_sim :: proc(dt: f32)
 
 cursor_pos_callback :: proc "c" (window: glfw.WindowHandle, x, y: f64)
 {
-	sim.cursor_pos = [2]f32{f32(x), f32(y)}
+	// need to convert to vulkan coordinates or things go weird
+
+	sim.cursor_pos = [2]f32{f32(x), f32(y)} * 2 - {sim.width, sim.height}
 }
 
 Delta_Time :: struct {
@@ -112,13 +114,13 @@ update_positions :: proc(thread_data: thread.Task)
 	data := get_task_data(Delta_Time, thread_data)
 	for &p in sim.particles[data.start:data.end] {
 		p.pos += p.vel * data.dt
-		if abs(p.pos.x) > sim.width - sim.field_radius {
-			p.pos.x = math.sign(p.pos.x) * (sim.width - sim.field_radius)
+		if abs(p.pos.x) > sim.width - 10 {
+			p.pos.x = math.sign(p.pos.x) * (sim.width - 10)
 			p.vel.x *= -DAMPING_FACTOR
 		}
 
-		if abs(p.pos.y) > sim.height - sim.field_radius {
-			p.pos.y = math.sign(p.pos.y) * (sim.height - sim.field_radius)
+		if abs(p.pos.y) > sim.height - 10 {
+			p.pos.y = math.sign(p.pos.y) * (sim.height - 10)
 			p.vel.y *= -DAMPING_FACTOR
 		}
 		sim.top_speed = max(sim.top_speed, glsl.length(p.vel))
@@ -314,22 +316,21 @@ draw_sim :: proc()
 {
 	clear(&sim.vertices)
 	clear(&sim.indices)
-	for particle in sim.particles {
-		cell_x, cell_y := position_to_cell_coord(particle.pos.x, particle.pos.y)
-		cell_key := key_from_hash(hash_cell(cell_x, cell_y))
-		red := f32(cell_key) / f32(len(sim.particles))
-		fmt.println(cell_key)
-		blue := 1 - red
-		green: f32 = 0.5
+	in_range_points := make(map[int]bool)
+	defer delete(in_range_points)
+	n := get_points_within_radius(sim.cursor_pos, &thread_idx_buffer)
+	for i in 0 ..< n {
+		in_range_points[thread_idx_buffer[i]] = true
+	}
+	for particle, i in sim.particles {
 		scale_vel := clamp(glsl.length(particle.vel) / sim.top_speed, 0, 1)
-		draw_circle(
-			&sim.vertices,
-			&sim.indices,
-			particle.pos,
-			sim.radius,
-			{red, green, blue},
-			// {scale_vel, 1 - scale_vel, 0.3},
-		)
+		color: [3]f32
+		if in_range_points[i] != false {
+			color = {1, 1, 1}
+		} else {
+			color = {scale_vel, 1 - scale_vel, 0.3}
+		}
+		draw_circle(&sim.vertices, &sim.indices, particle.pos, sim.radius, color)
 	}
 	gpu.staging_write_buffer_slice(&sim.buffers.index_buffer, sim.indices[:])
 	gpu.staging_write_buffer_slice(&sim.buffers.vertex_buffer, sim.vertices[:]) // Why every frame?
@@ -399,4 +400,3 @@ init_sim :: proc()
 		vertex_buffer = mesh.vertex_buffer_address,
 	}
 }
-
