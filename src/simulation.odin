@@ -12,16 +12,18 @@ import "gpu"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 // Define some useful constants
-GRAVITY: f32 : 0
+GRAVITY: f32 : 100
 DOWN: [2]f32 : {0, 1}
 RIGHT: [2]f32 : {1, 1}
-DAMPING_FACTOR: f32 : 0.90
+DAMPING_FACTOR: f32 : 0.70
+FRICTION_COEFFICIENT: f32 : 0.979
 MASS: f32 : 1
-TARGET_DENSITY: f32 : 1
-PRESSURE_MULTIPLER: f32 : 20
+TARGET_DENSITY: f32 : 1.0
+PRESSURE_MULTIPLER: f32 : 700
 INIT_SPEED_SCALE: f32 : 0
-FIELD_RADIUS: f32 : 50
-NUM_PARTICLES :: 1000
+FIELD_RADIUS: f32 : 20
+DRAW_RADIUS: f32 : 3
+NUM_PARTICLES :: 3000
 
 Simulation :: struct {
 	width, height:           f32,
@@ -97,6 +99,7 @@ apply_pressure_forces :: proc(thread_data: thread.Task)
 		pressure_force: [2]f32 = calculate_pressure_force(data.start + i)
 		pressure_acceleration: [2]f32 = pressure_force / p.density
 		p.vel += pressure_acceleration * data.dt
+		p.vel *= FRICTION_COEFFICIENT
 	}
 }
 
@@ -328,7 +331,7 @@ draw_sim :: proc()
 		if in_range_points[i] != false {
 			color = {1, 1, 1}
 		} else {
-			color = {scale_vel, 1 - scale_vel, 0.3}
+			color = {scale_vel, 0.5, 1 - scale_vel}
 		}
 		draw_circle(&sim.vertices, &sim.indices, particle.pos, sim.radius, color)
 	}
@@ -342,7 +345,7 @@ init_sim :: proc()
 	glfw.SetCursorPosCallback(rs.window, cursor_pos_callback)
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = 0.5 * f32(width), 0.5 * f32(height)
-	sim.radius = 5
+	sim.radius = DRAW_RADIUS
 	sim.field_radius = FIELD_RADIUS
 	sim.top_speed = 0.1
 	sim.core_count = os.get_processor_core_count()
@@ -351,15 +354,17 @@ init_sim :: proc()
 	sim.particles = make(#soa[dynamic]Point)
 	sim.vertices = make([dynamic]Vertex, context.temp_allocator)
 	sim.indices = make([dynamic]u32, context.temp_allocator)
-	for _ in 0 ..< NUM_PARTICLES {
+	for i in 0 ..< NUM_PARTICLES {
 		append(
 			&sim.particles,
 			Point {
 				{
 					// -sim.width + 2 * rand.float32() * sim.width,
 					// -sim.height + 2 * rand.float32() * sim.height,
-					rand.float32() * sim.width / 10,
-					rand.float32() * sim.height / 10,
+					f32(i) * math.sin(f32(i) / 10) / 4,
+					f32(i) * math.cos(f32(i) / 10) / 4,
+					// -sim.width / 6 + f32(i % 25) * sim.width / (50),
+					// -sim.height / 6 + f32(i / 25) * sim.height / (50),
 				},
 				{
 					(2 * rand.float32() - 1) * INIT_SPEED_SCALE,
