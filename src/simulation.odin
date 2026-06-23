@@ -16,14 +16,14 @@ GRAVITY: f32 : 0
 DOWN: [2]f32 : {0, 1}
 RIGHT: [2]f32 : {1, 1}
 DAMPING_FACTOR: f32 : 0.70
-FRICTION_COEFFICIENT: f32 : 0.97999999999999999999999999999
+FRICTION_COEFFICIENT: f32 : 0.98
 MASS: f32 : 1
 TARGET_DENSITY: f32 : 1.0
-PRESSURE_MULTIPLER: f32 : 200
+PRESSURE_MULTIPLER: f32 : 300
 INIT_SPEED_SCALE: f32 : 0
-FIELD_RADIUS: f32 : 75
-DRAW_RADIUS: f32 : 5
-NUM_PARTICLES :: 3000
+FIELD_RADIUS: f32 : 30
+DRAW_RADIUS: f32 : 3
+NUM_PARTICLES :: 2000
 
 Simulation :: struct {
 	width, height:           f32,
@@ -50,6 +50,7 @@ Simulation :: struct {
 	// Input
 	cursor_pos:              [2]f32,
 	mouse_left:              bool,
+	mouse_right:             bool,
 }
 
 sim: Simulation
@@ -77,8 +78,50 @@ update_sim :: proc(dt: f32)
 cursor_pos_callback :: proc "c" (window: glfw.WindowHandle, x, y: f64)
 {
 	// need to convert to vulkan coordinates or things go weird
+	sim.cursor_pos = [2]f32{f32(x), f32(y)} - {sim.width, sim.height}
+}
 
-	sim.cursor_pos = [2]f32{f32(x), f32(y)} * 2 - {sim.width, sim.height}
+mouse_button_callback :: proc "c" (window: glfw.WindowHandle, button: i32, action: i32, mods: i32)
+{
+	if button == glfw.MOUSE_BUTTON_LEFT {
+		if action == glfw.PRESS {
+			sim.mouse_left = true
+		} else if action == glfw.RELEASE {
+			sim.mouse_left = false
+		}
+	}
+
+	if button == glfw.MOUSE_BUTTON_RIGHT {
+		if action == glfw.PRESS {
+			sim.mouse_right = true
+		} else if action == glfw.RELEASE {
+			sim.mouse_right = false
+		}
+	}
+
+	context = runtime.default_context()
+	fmt.println(sim.mouse_left, sim.mouse_right)
+}
+
+interaction_force :: proc(
+	input_pos: [2]f32,
+	radius: f32,
+	strength: f32,
+	particle_pos: [2]f32,
+	particle_vel: [2]f32,
+) -> [2]f32
+{
+	interaction_force := [2]f32{0, 0}
+	dist := glsl.distance(input_pos, particle_pos)
+
+	// if particle indside radius calculate force towards input point
+	if dist < radius {
+		dir_to_input := glsl.normalize(input_pos - particle_pos)
+		centre_t := 1 - dist / radius
+		// calculate force (velocity subtracted to slow the particle)
+		interaction_force += (dir_to_input * strength - particle_vel) * centre_t
+	}
+	return interaction_force
 }
 
 Delta_Time :: struct {
@@ -117,6 +160,12 @@ update_positions :: proc(thread_data: thread.Task)
 {
 	data := get_task_data(Delta_Time, thread_data)
 	for &p in sim.particles[data.start:data.end] {
+		if sim.mouse_left {
+			p.vel -= interaction_force(sim.cursor_pos, 200, 3000, p.pos, p.vel) * data.dt
+		}
+		if sim.mouse_right {
+			p.vel += interaction_force(sim.cursor_pos, 200, 2000, p.pos, p.vel) * data.dt
+		}
 		p.pos += p.vel * data.dt
 		if abs(p.pos.x) > sim.width - 10 {
 			p.pos.x = math.sign(p.pos.x) * (sim.width - 10)
@@ -128,11 +177,6 @@ update_positions :: proc(thread_data: thread.Task)
 			p.vel.y *= -DAMPING_FACTOR
 		}
 		sim.top_speed = max(sim.top_speed, glsl.length(p.vel))
-		dist := glsl.distance(p.pos, sim.cursor_pos)
-		if dist < 200 {
-			p.vel +=
-				1.0 * math.pow((200 - dist), 4) * 0.0001 * glsl.normalize(p.pos - sim.cursor_pos)
-		}
 	}
 }
 
@@ -350,6 +394,7 @@ init_sim :: proc()
 {
 	rs := &gpu.rs
 	glfw.SetCursorPosCallback(rs.window, cursor_pos_callback)
+	glfw.SetMouseButtonCallback(rs.window, mouse_button_callback)
 	width, height := glfw.GetFramebufferSize(rs.window)
 	sim.width, sim.height = 0.5 * f32(width), 0.5 * f32(height)
 	sim.radius = DRAW_RADIUS
@@ -412,3 +457,4 @@ init_sim :: proc()
 		vertex_buffer = mesh.vertex_buffer_address,
 	}
 }
+

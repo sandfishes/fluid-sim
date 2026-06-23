@@ -10,22 +10,22 @@ when ODIN_OS == .Windows {
 _ :: libslang
 
 // Opaque handles
-ProgramLayout            :: ShaderReflection
-ShaderReflection         :: struct {}
-EntryPointReflection     :: struct {}
+ProgramLayout :: ShaderReflection
+ShaderReflection :: struct {}
+EntryPointReflection :: struct {}
 
-VariableReflection       :: struct {}
+VariableReflection :: struct {}
 VariableLayoutReflection :: struct {}
-TypeReflection           :: struct {}
-TypeLayoutReflection     :: struct {}
+TypeReflection :: struct {}
+TypeLayoutReflection :: struct {}
 
-FunctionReflection       :: struct {}
-DeclReflection           :: struct {}
+FunctionReflection :: struct {}
+DeclReflection :: struct {}
 
-Attribute                :: struct {}
-TypeParameterReflection  :: struct {}
-GenericReflection        :: struct {}
-GenericArgType           :: struct {}
+Attribute :: struct {}
+TypeParameterReflection :: struct {}
+GenericReflection :: struct {}
+GenericArgType :: struct {}
 
 SlangReflectionGenericArg :: struct #raw_union {
 	typeVal: ^TypeReflection,
@@ -70,7 +70,7 @@ SlangModifierID :: enum u32 {
 	INOUT,
 }
 
-LayoutUnit        :: ParameterCategory
+LayoutUnit :: ParameterCategory
 ParameterCategory :: enum u32 {
 	None                       = u32(SlangParameterCategory(.NONE)),
 	Mixed                      = u32(SlangParameterCategory(.MIXED)),
@@ -174,15 +174,15 @@ SlangParameterCategory :: enum u32 {
 	// Metal [[payload]] inputs
 	METAL_PAYLOAD,
 
-	 //
+	//
 	COUNT,
 
-	 // Aliases for Metal-specific categories.
+	// Aliases for Metal-specific categories.
 	METAL_BUFFER = CONSTANT_BUFFER,
 	METAL_TEXTURE = SHADER_RESOURCE,
 	METAL_SAMPLER = SAMPLER_STATE,
 
-	 // DEPRECATED:
+	// DEPRECATED:
 	VERTEX_INPUT = VARYING_INPUT,
 	FRAGMENT_OUTPUT = VARYING_OUTPUT,
 	COUNT_V1 = SUBPASS,
@@ -271,7 +271,6 @@ SlangScalarType :: enum u32 {
 }
 
 
-
 SlangResourceShape :: enum u32 {
 	BASE_SHAPE_MASK              = 0x0F,
 	NONE                         = 0x00,
@@ -343,13 +342,12 @@ BindingType :: enum u32 {
 	MUTABLE_TEXTURE = TEXTURE | MUTABLE_FLAG,
 	MUTABLE_TYPED_BUFFER = TYPED_BUFFER | MUTABLE_FLAG,
 	MUTABLE_RAW_BUFFER = RAW_BUFFER | MUTABLE_FLAG,
-
 	BASE_MASK = 0x00FF,
 	EXT_MASK = 0xFF00,
 }
 
-@(link_prefix="sp")
-@(default_calling_convention="c")
+@(link_prefix = "sp")
+@(default_calling_convention = "c")
 foreign libslang {
 	// Variable
 	ReflectionVariable_GetName :: proc(entryPoint: ^VariableReflection) -> cstring ---
@@ -364,11 +362,11 @@ foreign libslang {
 	ReflectionVariable_applySpecializations :: proc(var: ^VariableReflection, generic: ^GenericReflection) -> ^VariableReflection ---
 
 	// Type
-  	ReflectionType_GetName :: proc(inType: ^TypeReflection) -> cstring ---
+	ReflectionType_GetName :: proc(inType: ^TypeReflection) -> cstring ---
 	ReflectionType_GetFullName :: proc(inType: ^TypeReflection, outNameBlob: ^^IBlob) -> Result ---
 	ReflectionType_GetGenericContainer :: proc(inType: ^TypeReflection) -> ^GenericReflection ---
 	ReflectionType_GetResourceResultType :: proc(inType: ^TypeReflection) -> ^TypeReflection ---
-	ReflectionType_GetKind       :: proc(type: ^TypeReflection) -> SlangTypeKind ---
+	ReflectionType_GetKind :: proc(type: ^TypeReflection) -> SlangTypeKind ---
 	ReflectionType_GetFieldCount :: proc(type: ^TypeReflection) -> u32 ---
 	ReflectionType_GetFieldByIndex :: proc(inType: ^TypeReflection, index: u32) -> ^VariableReflection ---
 	ReflectionType_GetElementCount :: proc(inType: ^TypeReflection) -> uint ---
@@ -388,9 +386,9 @@ foreign libslang {
 	Reflection_FindFunctionByNameInType :: proc(reflection: ^ProgramLayout, reflType: ^TypeReflection, name: cstring) -> ^FunctionReflection ---
 	Reflection_FindVarByNameInType :: proc(reflection: ^ProgramLayout, reflType: ^TypeReflection, name: cstring) -> ^VariableReflection ---
 	Reflection_FindTypeByName :: proc(reflection: ^ProgramLayout, name: cstring) -> ^TypeReflection ---
-	Reflection_TryResolveOverloadedFunction :: proc(reflection: ^ProgramLayout, candidateCount: u32, candidates: ^^FunctionReflection,) -> ^FunctionReflection ---
-	Reflection_isSubType :: proc(reflection: ^ProgramLayout, subType: ^TypeReflection, superType: ^TypeReflection,) -> bool ---
-	Reflection_GetTypeLayout :: proc(reflection: ^ProgramLayout, inType: ^TypeReflection, rules: LayoutRules,) -> ^TypeLayoutReflection ---
+	Reflection_TryResolveOverloadedFunction :: proc(reflection: ^ProgramLayout, candidateCount: u32, candidates: ^^FunctionReflection) -> ^FunctionReflection ---
+	Reflection_isSubType :: proc(reflection: ^ProgramLayout, subType: ^TypeReflection, superType: ^TypeReflection) -> bool ---
+	Reflection_GetTypeLayout :: proc(reflection: ^ProgramLayout, inType: ^TypeReflection, rules: LayoutRules) -> ^TypeLayoutReflection ---
 
 	ReflectionUserAttribute_GetName :: proc(attrib: ^Attribute) -> cstring ---
 	ReflectionUserAttribute_GetArgumentCount :: proc(attrib: ^Attribute) -> u32 ---
@@ -478,7 +476,7 @@ foreign libslang {
 	ReflectionFunction_isOverloaded :: proc(func: ^FunctionReflection) -> bool ---
 	ReflectionFunction_getOverloadCount :: proc(func: ^FunctionReflection) -> u32 ---
 	ReflectionFunction_getOverload :: proc(func: ^FunctionReflection, index: u32) -> ^FunctionReflection ---
-	
+
 	Reflection_getTypeFromDecl :: proc(decl: ^DeclReflection) -> ^TypeReflection ---
 	ReflectionDecl_findModifier :: proc(decl: ^DeclReflection, modifierID: SlangModifierID) -> ^Modifier ---
 	ReflectionDecl_getChildrenCount :: proc(parentDecl: ^DeclReflection) -> u32 ---
@@ -507,8 +505,8 @@ foreign libslang {
 
 	ReflectionParameter_GetBindingIndex :: proc(inVarLayout: ^VariableLayoutReflection) -> u32 ---
 	ReflectionParameter_GetBindingSpace :: proc(inVarLayout: ^VariableLayoutReflection) -> u32 ---
-	@(deprecated="Use IMetadata->isParameterLocationUsed() instead.")
-	IsParameterLocationUsed :: proc(request: ^ICompileRequest,  entryPointIndex: Int, targetIndex: Int, category: ParameterCategory, spaceIndex: UInt, registerIndex: UInt, outUsed: ^bool) -> Result ---
+	@(deprecated = "Use IMetadata->isParameterLocationUsed() instead.")
+	IsParameterLocationUsed :: proc(request: ^ICompileRequest, entryPointIndex: Int, targetIndex: Int, category: ParameterCategory, spaceIndex: UInt, registerIndex: UInt, outUsed: ^bool) -> Result ---
 
 	ReflectionEntryPoint_getName :: proc(inEntryPoint: ^EntryPointReflection) -> cstring ---
 	ReflectionEntryPoint_getNameOverride :: proc(inEntryPoint: ^EntryPointReflection) -> cstring ---
@@ -547,5 +545,5 @@ foreign libslang {
 	ComputeStringHash :: proc(chars: cstring, count: uint) -> u32 ---
 
 	Reflection_getGlobalParamsTypeLayout :: proc(reflection: ^ProgramLayout) -> ^TypeLayoutReflection ---
-	Reflection_ToJson :: proc(reflection: ^ProgramLayout,request: ^ICompileRequest, outBlob: ^^IBlob) -> Result ---
+	Reflection_ToJson :: proc(reflection: ^ProgramLayout, request: ^ICompileRequest, outBlob: ^^IBlob) -> Result ---
 }
