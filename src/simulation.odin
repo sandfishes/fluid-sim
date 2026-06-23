@@ -12,17 +12,17 @@ import "gpu"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 // Define some useful constants
-GRAVITY: f32 : 100
+GRAVITY: f32 : 0
 DOWN: [2]f32 : {0, 1}
 RIGHT: [2]f32 : {1, 1}
 DAMPING_FACTOR: f32 : 0.70
-FRICTION_COEFFICIENT: f32 : 0.979
+FRICTION_COEFFICIENT: f32 : 0.97999999999999999999999999999
 MASS: f32 : 1
 TARGET_DENSITY: f32 : 1.0
-PRESSURE_MULTIPLER: f32 : 700
+PRESSURE_MULTIPLER: f32 : 200
 INIT_SPEED_SCALE: f32 : 0
-FIELD_RADIUS: f32 : 20
-DRAW_RADIUS: f32 : 3
+FIELD_RADIUS: f32 : 75
+DRAW_RADIUS: f32 : 5
 NUM_PARTICLES :: 3000
 
 Simulation :: struct {
@@ -49,6 +49,7 @@ Simulation :: struct {
 
 	// Input
 	cursor_pos:              [2]f32,
+	mouse_left:              bool,
 }
 
 sim: Simulation
@@ -127,6 +128,11 @@ update_positions :: proc(thread_data: thread.Task)
 			p.vel.y *= -DAMPING_FACTOR
 		}
 		sim.top_speed = max(sim.top_speed, glsl.length(p.vel))
+		dist := glsl.distance(p.pos, sim.cursor_pos)
+		if dist < 200 {
+			p.vel +=
+				1.0 * math.pow((200 - dist), 4) * 0.0001 * glsl.normalize(p.pos - sim.cursor_pos)
+		}
 	}
 }
 
@@ -261,7 +267,7 @@ convert_density_to_pressure :: proc(density: f32) -> f32
 
 smooth_kern :: #force_inline proc(rad, dst: f32) -> f32
 {
-	if dst >= sim.field_radius {return 0}
+	if dst >= rad {return 0}
 	volume := math.PI * math.pow(rad, 4) / 6 // Can make precalculate if needed
 	return (rad - dst) * (rad - dst) / volume
 }
@@ -326,12 +332,13 @@ draw_sim :: proc()
 		in_range_points[thread_idx_buffer[i]] = true
 	}
 	for particle, i in sim.particles {
-		scale_vel := clamp(glsl.length(particle.vel) / sim.top_speed, 0, 1)
+		// scale_vel := clamp(glsl.length(particle.vel) / sim.top_speed, 0, 1)
+		scale_vel := clamp(glsl.length(particle.vel) / 200, 0, 1)
 		color: [3]f32
 		if in_range_points[i] != false {
 			color = {1, 1, 1}
 		} else {
-			color = {scale_vel, 0.5, 1 - scale_vel}
+			color = {scale_vel, 0.7, 1 - scale_vel}
 		}
 		draw_circle(&sim.vertices, &sim.indices, particle.pos, sim.radius, color)
 	}
@@ -361,8 +368,8 @@ init_sim :: proc()
 				{
 					// -sim.width + 2 * rand.float32() * sim.width,
 					// -sim.height + 2 * rand.float32() * sim.height,
-					f32(i) * math.sin(f32(i) / 10) / 4,
-					f32(i) * math.cos(f32(i) / 10) / 4,
+					f32(i) * math.sin(f32(i) / 10) / 5,
+					f32(i) * math.cos(f32(i) / 10) / 5,
 					// -sim.width / 6 + f32(i % 25) * sim.width / (50),
 					// -sim.height / 6 + f32(i / 25) * sim.height / (50),
 				},

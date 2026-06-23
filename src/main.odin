@@ -92,7 +92,7 @@ vk_setup :: proc()
 	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
 	glfw.WindowHint(glfw.RESIZABLE, glfw.FALSE)
 
-	rs.window = glfw.CreateWindow(800, 600, "2D Simulation", nil, nil)
+	rs.window = glfw.CreateWindow(1200, 700, "2D Simulation", nil, nil)
 	gpu.init_vulkan()
 
 	// Load shaders
@@ -279,4 +279,3 @@ cleanup :: proc()
 	gpu.vulkan_shutdown()
 
 }
-
