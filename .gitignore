@@ -1,4 +1,4 @@
-gpu/slang
+src/gpu/slang
 
 # Prerequisites
 *.d
