@@ -1,4 +1,5 @@
 src/gpu/slang
+src/ui/clay-odin
 
 # Prerequisites
 *.d
@@ -56,3 +57,4 @@ dkms.conf
 # debug information files
 *.dwo
 debug.dSYM/
+
