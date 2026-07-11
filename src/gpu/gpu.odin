@@ -1,7 +1,4 @@
 package gpu
-/*
-	Credits go to https://github.com/wrapperup
-*/
 
 import "core:fmt"
 import "core:os"
@@ -10,11 +7,8 @@ import "core:strings"
 import "core:time"
 import "vendor:glfw"
 import vk "vendor:vulkan"
-
-
 // Slang bindings
 import sl "slang"
-
 
 when ODIN_OS == .Darwin {
 	// NOTE: just a bogus import of the system library,
@@ -24,10 +18,10 @@ when ODIN_OS == .Darwin {
 	foreign import __ "system:System.framework"
 }
 
-/* Ensure that slang compilation succeeded without any errors */
 slang_check :: #force_inline proc(#any_int result: int, loc := #caller_location)
 {
 	result: i32 = sl.Result(result)
+
 	if sl.FAILED(result) {
 		code: i32 = sl.GET_RESULT_CODE(result)
 		facility: i32 = sl.GET_RESULT_FACILITY(result)
@@ -84,23 +78,31 @@ diagnostics_check :: #force_inline proc(diagnostics: ^sl.IBlob, loc := #caller_l
 compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.ShaderModule
 {
 	// time the compilation
-	start_compile_time := time.tick_now()
+	start_compile_time: time.Tick = time.tick_now()
 
 	code, diagnostics: ^sl.IBlob
 	r: sl.Result
 
-	target_desc := sl.TargetDesc {
+	target_desc: sl.TargetDesc = {
 		structureSize = size_of(sl.TargetDesc),
 		format        = .SPIRV,
 		flags         = {.GENERATE_SPIRV_DIRECTLY},
 		profile       = rs.slang_global_session->findProfile("sm_6_0"),
 	}
 
-	compiler_option_entries := [?]sl.CompilerOptionEntry {
+	compiler_option_entries: []sl.CompilerOptionEntry = {
 		{name = .VulkanUseEntryPointName, value = {intValue0 = 1}},
 	}
 
-	session_desc := sl.SessionDesc {
+	contents, err := os.read_entire_file_from_path(
+		strings.clone_from_cstring(path),
+		context.allocator,
+	)
+	delete(contents)
+	if err != nil {
+		fmt.println("shader path does not exist! | ", err)
+	}
+	session_desc: sl.SessionDesc = {
 		structureSize            = size_of(sl.SessionDesc),
 		targets                  = &target_desc,
 		targetCount              = 1,
@@ -116,7 +118,7 @@ compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.S
 
 	module: ^sl.IModule = session->loadModule(path, &diagnostics)
 	if module == nil {
-		fmt.println("Shader compile error!")
+		fmt.println("Shader compile error! GPU module")
 		return {}
 	}
 	defer module->release()
@@ -139,7 +141,7 @@ compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.S
 		return {}
 	}
 
-	components := [3]^sl.IComponentType{module, vertex_entry, fragment_entry}
+	components: [3]^sl.IComponentType = {module, vertex_entry, fragment_entry}
 
 	linked_program: ^sl.IComponentType
 	r = session->createCompositeComponentType(
@@ -159,7 +161,7 @@ compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.S
 	code_size := target_code->getBufferSize()
 	source_code := slice.bytes_from_ptr(target_code->getBufferPointer(), auto_cast code_size)
 
-	info := vk.ShaderModuleCreateInfo {
+	info: vk.ShaderModuleCreateInfo = {
 		sType    = .SHADER_MODULE_CREATE_INFO,
 		codeSize = len(source_code), // codeSize needs to be in bytes
 		pCode    = raw_data(slice.reinterpret([]u32, source_code)), // code needs to be in 32bit words
@@ -168,7 +170,7 @@ compile_shader_module :: proc(path, vertex_main, fragment_main: cstring) -> vk.S
 	vk_module: vk.ShaderModule
 	vk_check(vk.CreateShaderModule(rs.device, &info, nil, &vk_module))
 
-	duration_msec := time.tick_since(start_compile_time)
+	duration_msec: time.Duration = time.tick_since(start_compile_time)
 	fmt.println("Loaded shader in", duration_msec)
 
 	return vk_module
@@ -196,11 +198,14 @@ REQUIRED_VK_11_FEATURES := vk.PhysicalDeviceVulkan11Features {
 	pNext                         = &REQUIRED_VK_12_FEATURES,
 	variablePointers              = true,
 	variablePointersStorageBuffer = true,
+	shaderDrawParameters          = true,
 }
 
 REQUIRED_VK_12_FEATURES := vk.PhysicalDeviceVulkan12Features {
-	sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-	pNext = &REQUIRED_VK_13_FEATURES,
+	sType                                        = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+	pNext                                        = &REQUIRED_VK_13_FEATURES,
+	descriptorBindingSampledImageUpdateAfterBind = true,
+	descriptorBindingVariableDescriptorCount     = true,
 }
 
 REQUIRED_VK_13_FEATURES := vk.PhysicalDeviceVulkan13Features {
@@ -210,10 +215,20 @@ REQUIRED_VK_13_FEATURES := vk.PhysicalDeviceVulkan13Features {
 	synchronization2 = true,
 }
 
+// TODO move into vulkan1.2 features
 REQUIRED_BUFFER_ADDRESS_FEATURES := vk.PhysicalDeviceBufferDeviceAddressFeaturesKHR {
 	sType               = .PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR,
 	bufferDeviceAddress = true,
+	pNext               = &REQUIRED_TEXTURE_INDEXING_FEATURES,
 }
+
+REQUIRED_TEXTURE_INDEXING_FEATURES := vk.PhysicalDeviceDescriptorIndexingFeatures {
+	sType                                     = .PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
+	descriptorBindingPartiallyBound           = true, // allows empty slots in array
+	runtimeDescriptorArray                    = true, // Allows unsized arrays
+	shaderSampledImageArrayNonUniformIndexing = true, // Allows use of dynamic indexing
+}
+
 
 // Set required extensions to support.
 DEVICE_EXTENSIONS: []cstring
@@ -289,14 +304,15 @@ Renderer_State :: struct {
 	frames:                 [FRAME_OVERLAP]FrameData,
 	frame_number:           int,
 
+
 	// Immediate submit
 	imm_fence:              vk.Fence,
 	imm_command_buffer:     vk.CommandBuffer,
 	imm_command_pool:       vk.CommandPool,
 
 	// Draw resources
-	draw_image:             GPUImage,
-	depth_image:            GPUImage,
+	draw_image:             GPU_Texture,
+	depth_image:            GPU_Texture,
 	draw_extent:            vk.Extent2D,
 	msaa_samples:           vk.SampleCountFlag,
 
@@ -318,15 +334,16 @@ FrameData :: struct {
 	main_command_buffer:                   vk.CommandBuffer,
 }
 
-GPUImage :: struct {
-	image:      vk.Image,
-	image_view: vk.ImageView,
-	memory:     vk.DeviceMemory,
-	extent:     vk.Extent3D,
-	format:     vk.Format,
+GPU_Texture :: struct {
+	image:   vk.Image,
+	view:    vk.ImageView,
+	memory:  vk.DeviceMemory,
+	extent:  vk.Extent3D,
+	format:  vk.Format,
+	sampler: vk.Sampler,
 }
 
-GPUBuffer :: struct {
+GPU_Buffer :: struct {
 	buffer: vk.Buffer,
 	memory: vk.DeviceMemory,
 	size:   vk.DeviceSize,
@@ -414,75 +431,82 @@ find_memory_type :: proc(
 	return 0
 }
 
-/* Create a gpu side image that we can write to */
 create_image :: proc(
+	width, height: u32,
 	format: vk.Format,
-	extent: vk.Extent3D,
-	image_usage_flags: vk.ImageUsageFlags,
+	usage: vk.ImageUsageFlags,
+	view_aspect: vk.ImageAspectFlags,
 	properties: vk.MemoryPropertyFlags = {.DEVICE_LOCAL},
 	tiling: vk.ImageTiling = .OPTIMAL,
 	flags: vk.ImageCreateFlags = {},
-) -> GPUImage
+) -> GPU_Texture
 {
-	gpu_image := GPUImage {
-		format = format,
-		extent = extent,
-	}
-	// Create the actual VkImage
-	{
-		img_info := vk.ImageCreateInfo {
-			sType       = .IMAGE_CREATE_INFO,
-			imageType   = .D2,
-			format      = format,
-			extent      = extent,
-			mipLevels   = 1,
-			arrayLayers = 1,
-			tiling      = tiling,
-			usage       = image_usage_flags,
-			flags       = flags,
-			samples     = {._1},
-		}
-		vk_check(vk.CreateImage(rs.device, &img_info, nil, &gpu_image.image))
+	image_extent: vk.Extent3D = {
+		width  = width,
+		height = height,
+		depth  = 1,
 	}
 
-	// Allocate the memory for the image
-	{
-		mem_requirements: vk.MemoryRequirements
-		vk.GetImageMemoryRequirements(rs.device, gpu_image.image, &mem_requirements)
-		alloc_info := vk.MemoryAllocateInfo {
-			sType           = .MEMORY_ALLOCATE_INFO,
-			allocationSize  = mem_requirements.size,
-			memoryTypeIndex = find_memory_type(
-				rs.physical_device,
-				mem_requirements.memoryTypeBits,
-				properties,
-			),
-		}
-		vk_check(vk.AllocateMemory(rs.device, &alloc_info, nil, &gpu_image.memory))
-		vk.BindImageMemory(rs.device, gpu_image.image, gpu_image.memory, 0)
+	create_info := vk.ImageCreateInfo {
+		sType         = .IMAGE_CREATE_INFO,
+		imageType     = .D2,
+		format        = format,
+		extent        = image_extent,
+		mipLevels     = 1,
+		arrayLayers   = 1,
+		tiling        = .OPTIMAL,
+		usage         = usage,
+		flags         = {},
+		samples       = {._1},
+		initialLayout = .UNDEFINED,
+	}
+	image: vk.Image
+	vk.CreateImage(rs.device, &create_info, nil, &image)
+	// Create the image then get the allocation requirements from it
+	mem_requirements: vk.MemoryRequirements
+	vk.GetImageMemoryRequirements(rs.device, image, &mem_requirements)
+	alloc_info := vk.MemoryAllocateInfo {
+		sType           = .MEMORY_ALLOCATE_INFO,
+		pNext           = &vk.MemoryAllocateFlagsInfoKHR {
+			sType = .MEMORY_ALLOCATE_FLAGS_INFO_KHR,
+			flags = {.DEVICE_ADDRESS_KHR},
+		},
+		allocationSize  = mem_requirements.size,
+		memoryTypeIndex = find_memory_type(
+			rs.physical_device,
+			mem_requirements.memoryTypeBits,
+			properties,
+		),
 	}
 
-	return gpu_image
-}
+	memory: vk.DeviceMemory
+	vk_check(vk.AllocateMemory(rs.device, &alloc_info, nil, &memory))
+	vk.BindImageMemory(rs.device, image, memory, 0)
 
-/* Create a view for the image which we can write to */
-create_image_view :: proc(device: vk.Device, image: ^GPUImage, aspect_flags: vk.ImageAspectFlags)
-{
-	info := vk.ImageViewCreateInfo {
+	image_view: vk.ImageView
+	view_create_info: vk.ImageViewCreateInfo = {
 		sType = .IMAGE_VIEW_CREATE_INFO,
 		viewType = .D2,
-		image = image.image,
-		format = image.format,
+		image = image,
+		format = format,
 		subresourceRange = {
 			baseMipLevel = 0,
 			levelCount = 1,
 			baseArrayLayer = 0,
 			layerCount = 1,
-			aspectMask = aspect_flags,
+			aspectMask = view_aspect,
 		},
 	}
 
-	vk_check(vk.CreateImageView(device, &info, nil, &image.image_view))
+	vk.CreateImageView(rs.device, &view_create_info, nil, &image_view)
+
+	return GPU_Texture {
+		image = image,
+		view = image_view,
+		memory = memory,
+		extent = image_extent,
+		format = format,
+	}
 }
 
 /* Create a GPU side buffer to write data into */
@@ -491,7 +515,7 @@ create_buffer :: proc(
 	usage: vk.BufferUsageFlags,
 	properties: vk.MemoryPropertyFlags = {.DEVICE_LOCAL},
 	loc := #caller_location,
-) -> GPUBuffer
+) -> GPU_Buffer
 {
 	buffer_info := vk.BufferCreateInfo {
 		sType       = .BUFFER_CREATE_INFO,
@@ -500,7 +524,7 @@ create_buffer :: proc(
 		sharingMode = .EXCLUSIVE,
 	}
 
-	gpu_buffer := GPUBuffer {
+	gpu_buffer := GPU_Buffer {
 		size = alloc_size,
 	}
 	vk_check(vk.CreateBuffer(rs.device, &buffer_info, nil, &gpu_buffer.buffer))
@@ -531,7 +555,7 @@ create_buffer :: proc(
 
 /* Writes to the buffer with the input slice at offset. */
 write_buffer_slice :: proc(
-	buffer: ^GPUBuffer,
+	buffer: ^GPU_Buffer,
 	in_data: []$T,
 	offset: vk.DeviceSize = 0,
 	loc := #caller_location,
@@ -552,7 +576,7 @@ write_buffer_slice :: proc(
 
 /* Write to a buffer. Uploads the data via a staging buffer. This is useful if your buffer is GPU only. */
 staging_write_buffer_slice :: proc(
-	buffer: ^GPUBuffer,
+	buffer: ^GPU_Buffer,
 	in_data: []$T,
 	offset: vk.DeviceSize = 0,
 	loc := #caller_location,
@@ -565,7 +589,7 @@ staging_write_buffer_slice :: proc(
 		loc,
 	)
 
-	staging: GPUBuffer = create_buffer(
+	staging: GPU_Buffer = create_buffer(
 		vk.DeviceSize(size),
 		{.TRANSFER_SRC},
 		{.HOST_VISIBLE, .HOST_COHERENT},
@@ -591,24 +615,80 @@ staging_write_buffer_slice :: proc(
 	}
 }
 
-/* Populate VkImageView in image */
-init_image_view :: proc(device: vk.Device, image: ^GPUImage, aspect_flags: vk.ImageAspectFlags)
+staging_write_image :: proc(
+	image: vk.Image,
+	pixels: []$T,
+	width: u32,
+	height: u32,
+	format: vk.Format,
+	bytes_per_row: u32,
+	loc := #caller_location,
+)
 {
-	info := vk.ImageViewCreateInfo {
-		sType = .IMAGE_VIEW_CREATE_INFO,
-		viewType = .D2,
-		image = image.image,
-		format = image.format,
-		subresourceRange = {
-			baseMipLevel = 0,
-			levelCount = 1,
-			baseArrayLayer = 0,
-			layerCount = 1,
-			aspectMask = aspect_flags,
-		},
+	size: int = len(pixels) * size_of(pixels[0])
+	staging: GPU_Buffer = create_buffer(
+		vk.DeviceSize(size),
+		{.TRANSFER_SRC},
+		{.HOST_VISIBLE, .HOST_COHERENT},
+	)
+	defer
+	{
+		vk.DestroyBuffer(rs.device, staging.buffer, nil)
+		vk.FreeMemory(rs.device, staging.memory, nil)
 	}
+	write_buffer_slice(&staging, pixels, loc = loc)
+	{
+		cmd := begin_immediate_submit()
+		range: vk.ImageSubresourceRange = {
+			aspectMask     = {.COLOR},
+			baseMipLevel   = 0,
+			levelCount     = 1,
+			baseArrayLayer = 0,
+			layerCount     = 1,
+		}
 
-	vk_check(vk.CreateImageView(device, &info, nil, &image.image_view))
+		barrier_to_transfer: vk.ImageMemoryBarrier = {
+			sType            = .IMAGE_MEMORY_BARRIER,
+			oldLayout        = .UNDEFINED,
+			newLayout        = .TRANSFER_DST_OPTIMAL,
+			image            = image,
+			subresourceRange = range,
+			srcAccessMask    = {},
+			dstAccessMask    = {.TRANSFER_WRITE},
+		}
+		vk.CmdPipelineBarrier(
+			cmd,
+			{.TOP_OF_PIPE},
+			{.TRANSFER},
+			{},
+			0,
+			nil,
+			0,
+			nil,
+			1,
+			&barrier_to_transfer,
+		)
+		copy_region: vk.BufferImageCopy = {
+			bufferOffset = 0,
+			bufferRowLength = 0,
+			bufferImageHeight = 0,
+			imageSubresource = {
+				aspectMask = {.COLOR},
+				mipLevel = 0,
+				baseArrayLayer = 0,
+				layerCount = 1,
+			},
+			imageExtent = {width = width, height = height, depth = 1},
+		}
+		vk.CmdCopyBufferToImage(cmd, staging.buffer, image, .TRANSFER_DST_OPTIMAL, 1, &copy_region)
+		barrier_to_readable: vk.ImageMemoryBarrier = {
+			oldLayout     = .TRANSFER_DST_OPTIMAL,
+			newLayout     = .SHADER_READ_ONLY_OPTIMAL,
+			srcAccessMask = {.TRANSFER_WRITE},
+			dstAccessMask = {.SHADER_READ},
+		}
+		end_immediate_submit()
+	}
 }
 
 /* Helper function for adding image barriers, otherwise it becomes very verbose. */
@@ -1090,20 +1170,21 @@ init_vulkan :: proc()
 	{
 		x, y := glfw.GetWindowSize(rs.window)
 
-		draw_image_format: vk.Format = .R32G32B32A32_SFLOAT
-		draw_image_extent := vk.Extent3D{u32(x), u32(y), 1}
-		draw_image_usages := vk.ImageUsageFlags {
-			.TRANSFER_SRC,
-			.TRANSFER_DST,
-			.STORAGE,
-			.COLOR_ATTACHMENT,
-		}
+		rs.draw_image = create_image(
+			u32(x),
+			u32(y),
+			.R32G32B32A32_SFLOAT,
+			{.TRANSFER_SRC, .TRANSFER_DST, .STORAGE, .COLOR_ATTACHMENT},
+			{.COLOR},
+		)
 
-		rs.draw_image = create_image(draw_image_format, draw_image_extent, draw_image_usages)
-		create_image_view(rs.device, &rs.draw_image, {.COLOR})
-
-		rs.depth_image = create_image(.D32_SFLOAT, draw_image_extent, {.DEPTH_STENCIL_ATTACHMENT})
-		create_image_view(rs.device, &rs.depth_image, {.DEPTH})
+		rs.depth_image = create_image(
+			u32(x),
+			u32(y),
+			.D32_SFLOAT,
+			{.DEPTH_STENCIL_ATTACHMENT},
+			{.DEPTH},
+		)
 	}
 
 	// Create command pool
@@ -1198,11 +1279,11 @@ vulkan_shutdown :: proc()
 	vk.DeviceWaitIdle(rs.device)
 
 	vk.DestroyImage(rs.device, rs.draw_image.image, nil)
-	vk.DestroyImageView(rs.device, rs.draw_image.image_view, nil)
+	vk.DestroyImageView(rs.device, rs.draw_image.view, nil)
 	vk.FreeMemory(rs.device, rs.draw_image.memory, nil)
 
 	vk.DestroyImage(rs.device, rs.depth_image.image, nil)
-	vk.DestroyImageView(rs.device, rs.depth_image.image_view, nil)
+	vk.DestroyImageView(rs.device, rs.depth_image.view, nil)
 	vk.FreeMemory(rs.device, rs.depth_image.memory, nil)
 
 	for &frame in rs.frames {
@@ -1366,7 +1447,7 @@ begin_render_pass :: proc()
 		renderArea = {extent = rs.draw_extent},
 		pDepthAttachment = &{
 			sType = .RENDERING_ATTACHMENT_INFO,
-			imageView = rs.depth_image.image_view,
+			imageView = rs.depth_image.view,
 			imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
 			loadOp = .CLEAR,
 			storeOp = .STORE,
@@ -1374,7 +1455,7 @@ begin_render_pass :: proc()
 		},
 		pColorAttachments = &vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
-			imageView = rs.draw_image.image_view,
+			imageView = rs.draw_image.view,
 			imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
 			loadOp = .CLEAR,
 			storeOp = .STORE,

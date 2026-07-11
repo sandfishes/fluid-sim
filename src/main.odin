@@ -3,24 +3,21 @@ package marching2d
 // NOTE
 // On linux you MUST add the src/gpu/slang/lib folder to LD_LIBRARY_PATH or else
 // slang will not be able to compile the shaders.
-import "core:math/rand"
 import geom "geometry"
 
 import "gpu"
+import "ui"
 
 import "base:runtime"
 import "core:fmt"
-import "core:math"
-import glsl "core:math/linalg/glsl"
 import "core:os"
-import "core:thread"
 import "core:time"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
 Buffer_Struct :: struct {
-	index_buffer:          gpu.GPUBuffer,
-	vertex_buffer:         gpu.GPUBuffer,
+	index_buffer:          gpu.GPU_Buffer,
+	vertex_buffer:         gpu.GPU_Buffer,
 	vertex_buffer_address: vk.DeviceAddress, // Pointer to the buffer on the GPU side.
 }
 
@@ -35,9 +32,11 @@ Vertex :: struct {
 }
 
 Point :: struct {
-	pos:     [2]f32,
-	vel:     [2]f32,
-	density: f32,
+	pos:           [2]f32,
+	predicted_pos: [2]f32,
+	vel:           [2]f32,
+	density:       f32,
+	near_density:  f32,
 }
 
 
@@ -50,16 +49,35 @@ main :: proc()
 	// Create index buffer
 	init_sim()
 	last_frame_time := glfw.GetTime()
+	platform_config: ui.Platform_Config = {
+		window = rs.window,
+	}
+	ui_config: ui.UI_Config = {
+		x      = 0,
+		y      = 0,
+		width  = 600,
+		height = 400,
+	}
+	// TODO remove frame stuff
+	ui.init(platform_config, ui_config, nil, nil)
 	for !glfw.WindowShouldClose(rs.window) {
 		current_frame_time := glfw.GetTime()
-		dt: f32 = f32(current_frame_time - last_frame_time)
+		dt: f32 = min(0.167, f32(current_frame_time - last_frame_time))
+		// dt: f32 = f32(current_frame_time - last_frame_time)
 		last_frame_time = current_frame_time
+
+		if sim.mouse_left == .CLICK {
+			sim.mouse_left = .DOWN
+		}
+		if sim.mouse_right == .CLICK {
+			sim.mouse_right = .DOWN
+		}
+
 		glfw.PollEvents()
 		cmd: vk.CommandBuffer = vk_frame_setup()
 
 		update_sim(dt)
 		draw_sim()
-
 		vk.CmdPushConstants(
 			cmd,
 			rs.pipeline_layout,
@@ -68,14 +86,14 @@ main :: proc()
 			size_of(GPU_Draw_Push_Constants),
 			&sim.gpu_constants,
 		)
-
 		buffers := [?]vk.Buffer{sim.buffers.vertex_buffer.buffer}
 		offsets := [?]vk.DeviceSize{0}
 		vk.CmdBindVertexBuffers(cmd, 0, 1, &buffers[0], &offsets[0])
 		vk.CmdBindIndexBuffer(cmd, sim.buffers.index_buffer.buffer, 0, .UINT32)
-
 		// Draw triangle
 		vk.CmdDrawIndexed(cmd, u32(len(sim.indices)), 1, 0, 0, 0)
+
+		draw_controls(dt, cmd)
 
 		vk_frame_end(cmd)
 
@@ -279,3 +297,4 @@ cleanup :: proc()
 	gpu.vulkan_shutdown()
 
 }
+
