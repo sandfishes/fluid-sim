@@ -30,31 +30,31 @@ SMOOTHING_RADIUS: f32 = 100
 VISCOSCITY_STRENGTH: f32 = 0
 
 Simulation :: struct {
-	width, height:           f32,
-	radius:                  f32,
-	field_radius:            f32,
-	top_speed:               f32,
-	vertices:                [dynamic]Vertex, //(change to instances later)
-	indices:                 [dynamic]u32,
-	gpu_constants:           GPU_Draw_Push_Constants,
-	buffers:                 Buffer_Struct,
-
+	width, height:                 f32,
+	radius:                        f32,
+	field_radius:                  f32,
+	top_speed:                     f32,
+	vertices:                      [dynamic]Vertex, //(change to instances later)
+	indices:                       [dynamic]u32,
+	gpu_constants:                 GPU_Draw_Push_Constants,
+	buffers:                       Buffer_Struct,
+	compute_descriptor_set_layout: vk.DescriptorSetLayout,
 	// Hot reloading info
-	current_last_write_time: time.Time,
+	current_last_write_time:       time.Time,
 
 	// resources
-	thread_pool:             thread.Pool,
-	core_count:              int,
+	thread_pool:                   thread.Pool,
+	core_count:                    int,
 
 	// Fluid particles
-	particles:               #soa[dynamic]Point,
-	spatial_lookup:          [NUM_PARTICLES]Spatial_Entry,
-	start_indices:           [NUM_PARTICLES]int,
+	particles:                     #soa[dynamic]Point,
+	spatial_lookup:                [NUM_PARTICLES]Spatial_Entry,
+	start_indices:                 [NUM_PARTICLES]int,
 
 	// Input
-	cursor_pos:              [2]f32,
-	mouse_left:              Mouse_State,
-	mouse_right:             Mouse_State,
+	cursor_pos:                    [2]f32,
+	mouse_left:                    Mouse_State,
+	mouse_right:                   Mouse_State,
 }
 
 Mouse_State :: enum {
@@ -65,7 +65,6 @@ Mouse_State :: enum {
 
 sim: Simulation
 
-// TODO claydo
 update_sim :: proc(dt: f32)
 {
 	free_all(context.temp_allocator)
@@ -86,7 +85,6 @@ update_sim :: proc(dt: f32)
 	do_all(apply_pressure_forces, thread_data, 0, len(sim.particles), &sim.thread_pool)
 	do_all(apply_viscoscity_forces, thread_data, 0, len(sim.particles), &sim.thread_pool)
 	do_all(update_positions, thread_data, 0, len(sim.particles), &sim.thread_pool)
-
 }
 
 apply_viscoscity_forces :: proc(thread_data: thread.Task)
@@ -511,10 +509,12 @@ init_sim :: proc()
 		{.VERTEX_BUFFER, .TRANSFER_DST},
 	)
 
-	sim.buffers.storage_buffer = gpu.create_buffer(
-		auto_cast (size_of(Particle) * len(sim.vertices)),
-		{.VERTEX_BUFFER, .STORAGE_BUFFER, .TRANSFER_DST},
-	)
+	for i in 0 ..< gpu.FRAME_OVERLAP {
+		sim.buffers.storage_buffers[i] = gpu.create_buffer(
+			auto_cast (size_of(Particle) * len(sim.vertices)),
+			{.VERTEX_BUFFER, .STORAGE_BUFFER, .TRANSFER_DST},
+		)
+	}
 
 	mesh := Buffer_Struct{sim.buffers.index_buffer, sim.buffers.vertex_buffer, 0}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
