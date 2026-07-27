@@ -931,15 +931,19 @@ init_vulkan :: proc()
 		)
 
 		has_graphics := false
+		has_compute := false
 
 		for queue_family, i in &queue_families {
-			if .GRAPHICS in queue_family.queueFlags {
+			if .GRAPHICS in queue_family.queueFlags && .COMPUTE in queue_family.queueFlags {
 				rs.graphics_queue_family = u32(i)
 				has_graphics = true
+				has_compute = true
 			}
 		}
 
+		// TODO allow separate queues, and use async compute
 		assert(has_graphics)
+		assert(has_compute)
 	}
 
 

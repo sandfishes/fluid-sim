@@ -511,6 +511,11 @@ init_sim :: proc()
 		{.VERTEX_BUFFER, .TRANSFER_DST},
 	)
 
+	sim.buffers.storage_buffer = gpu.create_buffer(
+		auto_cast (size_of(Particle) * len(sim.vertices)),
+		{.VERTEX_BUFFER, .STORAGE_BUFFER, .TRANSFER_DST},
+	)
+
 	mesh := Buffer_Struct{sim.buffers.index_buffer, sim.buffers.vertex_buffer, 0}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
 		sType  = .BUFFER_DEVICE_ADDRESS_INFO,

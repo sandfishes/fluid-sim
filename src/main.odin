@@ -19,6 +19,7 @@ Buffer_Struct :: struct {
 	index_buffer:          gpu.GPU_Buffer,
 	vertex_buffer:         gpu.GPU_Buffer,
 	vertex_buffer_address: vk.DeviceAddress, // Pointer to the buffer on the GPU side.
+	storage_buffer:        gpu.GPU_Buffer,
 }
 
 GPU_Draw_Push_Constants :: struct {
@@ -37,6 +38,12 @@ Point :: struct {
 	vel:           [2]f32,
 	density:       f32,
 	near_density:  f32,
+}
+
+Particle :: struct {
+	position: [2]f32,
+	velocity: [2]f32,
+	color:    [4]f32,
 }
 
 
