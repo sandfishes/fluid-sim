@@ -455,29 +455,35 @@ init_descriptor_sets :: proc()
 		gpu.vk_check(
 			vk.AllocateDescriptorSets(gpu.rs.device, &alloc_info, &compute.descriptor_sets[i]),
 		)
+	}
+
+	for i in 0 ..< gpu.FRAME_OVERLAP {
 		compute_write_descriptor_sets: []vk.WriteDescriptorSet = {
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .STORAGE_BUFFER,
+				descriptorCount = 1,
 				dstBinding = 0,
-				dstSet = compute.storage_buffers[(i - 1) % gpu.FRAME_OVERLAP].descriptor,
+				dstSet = compute.storage_buffers[(gpu.FRAME_OVERLAP - 1 + i) % gpu.FRAME_OVERLAP].descriptor,
 			},
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .STORAGE_BUFFER,
+				descriptorCount = 1,
 				dstBinding = 1,
 				dstSet = compute.storage_buffers[i].descriptor,
 			},
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .UNIFORM_BUFFER,
+				descriptorCount = 1,
 				dstBinding = 2,
 				dstSet = compute.uniform_buffers[i].descriptor,
 			},
 		}
 		vk.UpdateDescriptorSets(
 			gpu.rs.device,
-			len(compute.descriptor_sets),
+			u32(len(compute_write_descriptor_sets)),
 			&compute_write_descriptor_sets[0],
 			0,
 			nil,

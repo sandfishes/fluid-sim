@@ -362,7 +362,8 @@ create_buffer :: proc(
 	}
 
 	gpu_buffer := GPU_Buffer {
-		size = alloc_size,
+		size       = alloc_size,
+		descriptor = {},
 	}
 	vk_check(vk.CreateBuffer(rs.device, &buffer_info, nil, &gpu_buffer.buffer))
 
