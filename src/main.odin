@@ -66,7 +66,7 @@ main :: proc()
 	}
 	// TODO remove frame stuff
 	ui.init(platform_config, ui_config, nil, nil)
-	prepar_compute()
+	prepare_compute()
 	for !glfw.WindowShouldClose(rs.window) {
 		current_frame_time := glfw.GetTime()
 		dt: f32 = min(0.167, f32(current_frame_time - last_frame_time))
@@ -299,6 +299,7 @@ Compute :: struct {
 	descriptor_sets:       [gpu.FRAME_OVERLAP]vk.DescriptorSet,
 	pipeline_layout:       vk.PipelineLayout,
 	pipeline:              vk.Pipeline,
+	pipeline_cache:        vk.PipelineCache,
 	uniform_buffers:       [gpu.FRAME_OVERLAP]gpu.GPU_Buffer,
 	storage_buffers:       [gpu.FRAME_OVERLAP]gpu.GPU_Buffer,
 	uniform_data:          Compute_Uniform_Data,
@@ -315,22 +316,22 @@ prepare_compute :: proc()
 			sType = .FENCE_CREATE_INFO,
 			flags = {.SIGNALED},
 		}
-		vk_check(vk.CreateFence(rs.device, &fence_create_info, nil, fence))
+		gpu.vk_check(vk.CreateFence(gpu.rs.device, &fence_create_info, nil, &fence))
 	}
 
 	// Populate the uniform buffers
-	for i in 0 ..< compute.uniform_buffers.len {
+	for i in 0 ..< len(compute.uniform_buffers) {
 		compute.uniform_buffers[i] = gpu.create_buffer(
 			vk.DeviceSize(size_of(Compute_Uniform_Data)),
-			.UNIFORM_BUFFER,
+			{.UNIFORM_BUFFER},
 			{.HOST_COHERENT, .HOST_VISIBLE},
 		)
 		// Create the buffers to actually store the particles
 		// TODO write the data into the buffer when intializing the simulation
 		compute.storage_buffers[i] = gpu.create_buffer(
 			NUM_PARTICLES * size_of(Particle),
-			{.VERTEX, .STORAGE_BUFFER, .TRANSFER_DST},
-			.DEVICE_LOCAL,
+			{.STORAGE_BUFFER, .TRANSFER_DST},
+			{.DEVICE_LOCAL},
 		)
 	}
 
@@ -346,13 +347,21 @@ prepare_compute :: proc()
 
 init_compute_pipeline :: proc(module: vk.ShaderModule)
 {
+	// Create the pipeline cache
+	pipeline_cache_CI: vk.PipelineCacheCreateInfo = {
+		sType = .PIPELINE_CACHE_CREATE_INFO,
+	}
+	gpu.vk_check(
+		vk.CreatePipelineCache(gpu.rs.device, &pipeline_cache_CI, nil, &compute.pipeline_cache),
+	)
+
 	pipeline_layout_CI: vk.PipelineLayoutCreateInfo = {
 		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
 		setLayoutCount = 1,
 		pSetLayouts    = &compute.descriptor_set_layout,
 	}
 
-	vk_check(
+	gpu.vk_check(
 		vk.CreatePipelineLayout(gpu.rs.device, &pipeline_layout_CI, nil, &compute.pipeline_layout),
 	)
 
@@ -368,10 +377,10 @@ init_compute_pipeline :: proc(module: vk.ShaderModule)
 		stage             = shader_stage_CI,
 	}
 	// TODO does this require a pipeline cache??
-	vk_check(
+	gpu.vk_check(
 		vk.CreateComputePipelines(
 			gpu.rs.device,
-			nil,
+			compute.pipeline_cache,
 			1,
 			&compute_pipeline_CI,
 			nil,
@@ -382,7 +391,7 @@ init_compute_pipeline :: proc(module: vk.ShaderModule)
 
 init_descriptor_sets :: proc()
 {
-	layoutBindings: [^]vk.DescriptorSetLayoutBinding = {
+	layoutBindings: []vk.DescriptorSetLayoutBinding = {
 		{
 			binding            = 0,
 			descriptorType     = .STORAGE_BUFFER,
@@ -408,9 +417,9 @@ init_descriptor_sets :: proc()
 	layout_info: vk.DescriptorSetLayoutCreateInfo = {
 		sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		bindingCount = 3,
-		pBindings    = layoutBindings,
+		pBindings    = &layoutBindings[0],
 	}
-	vk_check(
+	gpu.vk_check(
 		vk.CreateDescriptorSetLayout(
 			gpu.rs.device,
 			&layout_info,
@@ -427,47 +436,49 @@ init_descriptor_sets :: proc()
 	}
 	descriptor_pool_CI: vk.DescriptorPoolCreateInfo = {
 		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-		pPoolSizes    = &pool_sizes,
-		poolSizeCount = pool_sizes.len,
+		pPoolSizes    = &pool_sizes[0],
+		poolSizeCount = u32(len(pool_sizes)),
 		maxSets       = gpu.FRAME_OVERLAP,
 	}
-	vk_check(vk.CreateDescriptorPool(gpu.rs.device, &descriptor_pool_CI, nil, descriptor_pool))
+	gpu.vk_check(
+		vk.CreateDescriptorPool(gpu.rs.device, &descriptor_pool_CI, nil, &compute.descriptor_pool),
+	)
 
 	for i in 0 ..< gpu.FRAME_OVERLAP {
 		alloc_info: vk.DescriptorSetAllocateInfo = {
 			sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
 			pNext              = nil,
 			descriptorPool     = compute.descriptor_pool,
-			pDescriptorSet     = &compute.descriptor_set_layout,
+			pSetLayouts        = &compute.descriptor_set_layout,
 			descriptorSetCount = 1,
 		}
-		vk_check(
+		gpu.vk_check(
 			vk.AllocateDescriptorSets(gpu.rs.device, &alloc_info, &compute.descriptor_sets[i]),
 		)
-		compute_write_descritor_sets: [^]vk.WriteDescriptorSet = {
+		compute_write_descriptor_sets: []vk.WriteDescriptorSet = {
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .STORAGE_BUFFER,
 				dstBinding = 0,
-				descriptorSet = compute.storage_buffers[(i - 1) % gpu.FRAME_OVERLAP].descriptor,
+				dstSet = compute.storage_buffers[(i - 1) % gpu.FRAME_OVERLAP].descriptor,
 			},
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .STORAGE_BUFFER,
 				dstBinding = 1,
-				descriptorSet = compute.storage_buffers[i].descriptor,
+				dstSet = compute.storage_buffers[i].descriptor,
 			},
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .UNIFORM_BUFFER,
 				dstBinding = 2,
-				descriptorSet = compute.uniform_buffers[i].descriptor,
+				dstSet = compute.uniform_buffers[i].descriptor,
 			},
 		}
 		vk.UpdateDescriptorSets(
 			gpu.rs.device,
-			compute_write_descritor_sets.len,
-			compute_write_descriptor_sets,
+			len(compute.descriptor_sets),
+			&compute_write_descriptor_sets[0],
 			0,
 			nil,
 		)

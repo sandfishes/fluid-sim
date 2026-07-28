@@ -516,7 +516,7 @@ init_sim :: proc()
 		)
 	}
 
-	mesh := Buffer_Struct{sim.buffers.index_buffer, sim.buffers.vertex_buffer, 0}
+	mesh := Buffer_Struct{sim.buffers.index_buffer, sim.buffers.vertex_buffer, 0, {}}
 	vertex_buffer_address_info := vk.BufferDeviceAddressInfo {
 		sType  = .BUFFER_DEVICE_ADDRESS_INFO,
 		buffer = mesh.vertex_buffer.buffer,

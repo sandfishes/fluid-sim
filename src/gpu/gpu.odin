@@ -5,6 +5,7 @@ import "core:c"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
+import sl "slang"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
@@ -1036,7 +1037,7 @@ init_vulkan :: proc()
 			sType            = .COMMAND_POOL_CREATE_INFO,
 			pNext            = nil,
 			flags            = {.RESET_COMMAND_BUFFER},
-			queueFamilyIndex = rs.graphics_queue_family,
+			queueFamilyIndex = rs.queue_family,
 		}
 
 		for i in 0 ..< FRAME_OVERLAP {
