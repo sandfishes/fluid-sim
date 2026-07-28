@@ -66,6 +66,7 @@ main :: proc()
 	}
 	// TODO remove frame stuff
 	ui.init(platform_config, ui_config, nil, nil)
+	prepar_compute()
 	for !glfw.WindowShouldClose(rs.window) {
 		current_frame_time := glfw.GetTime()
 		dt: f32 = min(0.167, f32(current_frame_time - last_frame_time))
@@ -340,14 +341,43 @@ prepare_compute :: proc()
 		"vertexmain",
 		"fragmentmain",
 	)
-	create_compute_pipeline(module)
-
-
+	init_compute_pipeline(module)
 }
 
 init_compute_pipeline :: proc(module: vk.ShaderModule)
 {
+	pipeline_layout_CI: vk.PipelineLayoutCreateInfo = {
+		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
+		setLayoutCount = 1,
+		pSetLayouts    = &compute.descriptor_set_layout,
+	}
 
+	vk_check(
+		vk.CreatePipelineLayout(gpu.rs.device, &pipeline_layout_CI, nil, &compute.pipeline_layout),
+	)
+
+	shader_stage_CI: vk.PipelineShaderStageCreateInfo = {
+		sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+		pName  = "main",
+		module = module,
+	}
+	compute_pipeline_CI: vk.ComputePipelineCreateInfo = {
+		sType             = .COMPUTE_PIPELINE_CREATE_INFO,
+		layout            = compute.pipeline_layout,
+		basePipelineIndex = 0, // TODO is this correct?
+		stage             = shader_stage_CI,
+	}
+	// TODO does this require a pipeline cache??
+	vk_check(
+		vk.CreateComputePipelines(
+			gpu.rs.device,
+			nil,
+			1,
+			&compute_pipeline_CI,
+			nil,
+			&compute.pipeline,
+		),
+	)
 }
 
 init_descriptor_sets :: proc()
@@ -403,7 +433,7 @@ init_descriptor_sets :: proc()
 	}
 	vk_check(vk.CreateDescriptorPool(gpu.rs.device, &descriptor_pool_CI, nil, descriptor_pool))
 
-	for i in 0 ..< compute.uniform_buffers.len {
+	for i in 0 ..< gpu.FRAME_OVERLAP {
 		alloc_info: vk.DescriptorSetAllocateInfo = {
 			sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
 			pNext              = nil,
@@ -442,24 +472,6 @@ init_descriptor_sets :: proc()
 			nil,
 		)
 	}
-
-	for i in 0 ..< gpu.FRAME_OVERLAP {
-		buffer_info: vk.DescriptorBufferInfo = {uniform_buffers}
-	}
-	max_binding: u32 = 1000
-	count_info: vk.DescriptorSetVariableDescriptorCountAllocateInfoEXT = {
-		sType              = .DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO_EXT,
-		descriptorSetCount = 1,
-		pDescriptorCounts  = &max_binding,
-	}
-	alloc_info: vk.DescriptorSetAllocateInfo = {
-		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool     = uc.descriptor_pool,
-		descriptorSetCount = 1,
-		pSetLayouts        = &uc.descriptor_layout,
-		pNext              = &count_info,
-	}
-	gpu.vk_check(vk.AllocateDescriptorSets(gpu.rs.device, &alloc_info, &uc.descriptor_set))
 }
 
 cleanup :: proc()
