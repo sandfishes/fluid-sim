@@ -1,0 +1,1 @@
+This module is taken and vendored from https://github.com/DragosPopse/odin-slang

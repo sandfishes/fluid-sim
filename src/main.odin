@@ -458,27 +458,34 @@ init_descriptor_sets :: proc()
 	}
 
 	for i in 0 ..< gpu.FRAME_OVERLAP {
+		// Create the buffer info
 		compute_write_descriptor_sets: []vk.WriteDescriptorSet = {
+			// We bind the descriptor set of the previous storage buffer because this is the "input" to the system. 
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .STORAGE_BUFFER,
 				descriptorCount = 1,
 				dstBinding = 0,
-				dstSet = compute.storage_buffers[(gpu.FRAME_OVERLAP - 1 + i) % gpu.FRAME_OVERLAP].descriptor,
+				dstSet = compute.descriptor_sets[i],
+				pBufferInfo = &compute.storage_buffers[(gpu.FRAME_OVERLAP - 2 + i) % gpu.FRAME_OVERLAP].descriptor_info,
 			},
+			// This is the "output" of this frame
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .STORAGE_BUFFER,
 				descriptorCount = 1,
 				dstBinding = 1,
-				dstSet = compute.storage_buffers[i].descriptor,
+				dstSet = compute.descriptor_sets[i],
+				pBufferInfo = &compute.storage_buffers[i].descriptor_info,
 			},
+			// This holds the data we need for this frame's calculations
 			{
 				sType = .WRITE_DESCRIPTOR_SET,
 				descriptorType = .UNIFORM_BUFFER,
 				descriptorCount = 1,
 				dstBinding = 2,
-				dstSet = compute.uniform_buffers[i].descriptor,
+				dstSet = compute.descriptor_sets[i],
+				pBufferInfo = &compute.uniform_buffers[i].descriptor_info,
 			},
 		}
 		vk.UpdateDescriptorSets(

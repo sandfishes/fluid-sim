@@ -90,7 +90,7 @@ GPU_Buffer :: struct {
 	buffer:     vk.Buffer,
 	memory:     vk.DeviceMemory,
 	size:       vk.DeviceSize,
-	descriptor: vk.DescriptorSet, // optional
+	descriptor_info: vk.DescriptorBufferInfo, // optional
 }
 
 // Set required features to enable here. These are used to pick the physical device as well.
@@ -363,7 +363,6 @@ create_buffer :: proc(
 
 	gpu_buffer := GPU_Buffer {
 		size       = alloc_size,
-		descriptor = {},
 	}
 	vk_check(vk.CreateBuffer(rs.device, &buffer_info, nil, &gpu_buffer.buffer))
 
@@ -388,6 +387,12 @@ create_buffer :: proc(
 
 	vk.BindBufferMemory(rs.device, gpu_buffer.buffer, gpu_buffer.memory, 0)
 
+	gpu_buffer.descriptor_info = vk.DescriptorBufferInfo{
+		buffer = gpu_buffer.buffer,
+		offset = 0,
+		range = gpu_buffer.size,
+	}
+	
 	return gpu_buffer
 }
 
@@ -576,6 +581,7 @@ init_vulkan :: proc()
 			vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME, // Enabled by default in 1.3
 			vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, // Enabled by default in 1.3
 			vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+			vk.EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 		}
 	} else {
 		DEVICE_EXTENSIONS = []cstring {
@@ -585,6 +591,7 @@ init_vulkan :: proc()
 			vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME, // Enabled by default in 1.3
 			vk.KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, // Enabled by default in 1.3
 			vk.KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+			vk.EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
 		}
 	}
 	// set up slang global session
