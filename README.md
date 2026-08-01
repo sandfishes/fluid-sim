@@ -1,3 +1,6 @@
+
+https://github.com/user-attachments/assets/5b97b3e8-9141-46a2-a8b8-f19ee6f35ca0
+
 This is a 2D fluid simulation using Vulkan.
 The UI is a combination of Clay and the Odin vendored font-stash.
 
@@ -6,7 +9,4 @@ UI layout is handled by clay, the odin-clay bindings from the clay repo must be 
 
 Slang and Vulkan must be installed. There may also be some shenanigans with LD linking the correct dylibs especially on Linux.
 
-
-
-https://github.com/user-attachments/assets/95de57c7-1f07-4822-96ff-88eb4aec7659
 
