@@ -44,7 +44,7 @@ Renderer_State :: struct {
 	swapchain_extent:       vk.Extent2D,
 
 	// Command Pool/Buffer
-	frames:                 [FRAME_OVERLAP]FrameData,
+	frames:                 [FRAMES_IN_FLIGHT]FrameData,
 	frame_number:           int,
 
 
@@ -148,7 +148,7 @@ VALIDATION_LAYERS := []cstring{"VK_LAYER_KHRONOS_validation"}
 VALIDATION_FEATURES := []vk.ValidationFeatureEnableEXT{.DEBUG_PRINTF}
 
 // Number of frames to provide in flight.
-FRAME_OVERLAP :: 2
+FRAMES_IN_FLIGHT :: 2
 
 /* Check the result of a Vulkan function call and provide diagnostics on failure (when in debug mode) */
 vk_check :: proc(result: vk.Result, loc := #caller_location)
@@ -189,7 +189,7 @@ debug_callback :: proc "system" (
 /* Returns the framedata for the current frame. */
 current_frame :: proc() -> ^FrameData
 {
-	return &rs.frames[rs.frame_number % FRAME_OVERLAP]
+	return &rs.frames[rs.frame_number % FRAMES_IN_FLIGHT]
 }
 
 /* Create a command buffer for one time submit */
@@ -392,7 +392,7 @@ create_buffer :: proc(
 		offset = 0,
 		range = gpu_buffer.size,
 	}
-	
+
 	return gpu_buffer
 }
 
@@ -1048,7 +1048,7 @@ init_vulkan :: proc()
 			queueFamilyIndex = rs.queue_family,
 		}
 
-		for i in 0 ..< FRAME_OVERLAP {
+		for i in 0 ..< FRAMES_IN_FLIGHT {
 			vk_check(
 				vk.CreateCommandPool(
 					rs.device,
@@ -1434,4 +1434,3 @@ end_render_pass :: proc()
 		vk_check(vk.QueueSubmit2KHR(rs.graphics_queue, 1, &submit, current_frame().render_fence))
 	}
 }
-

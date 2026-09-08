@@ -1,22 +1,4 @@
-struct Particle
-{
-    float2 position;
-    float2 velocity;
-    float3 color;
+[[vk::binding(0, 0)]]
+cbuffer ParamterUBO {
+    float deltaTime;
 };
-
-struct ParticleSSBO {
-    Particle particles; 
-};
-
-StructuredBuffer<ParticleSSBO> particlesIn;
-RWStructuredBuffer<ParticleSSBO> particlesOut;
-
-[shader("vertex")]
-VSOutput vertexmain()
-{
-}
-
-[shader("fragment")]
-float4 fragmentmain() {
-}
